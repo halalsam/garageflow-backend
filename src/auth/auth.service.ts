@@ -1,0 +1,100 @@
+import {
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { User } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+import { PrismaService } from '../prisma/prisma.service';
+import { serializeUser } from '../common/serializers';
+import { AccessTokenPayload } from './jwt.strategy';
+import { LoginDto } from './dto/login.dto';
+
+type Tokens = { accessToken: string; refreshToken: string };
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+  ) {}
+
+  // ── Public flows ───────────────────────────────────────────────────────────
+
+  /** Token-based login. Returns the user (with role for direct routing) + tokens. */
+  async login(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
+    if (!user || !user.active) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+    const ok = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!ok) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+    const tokens = await this.issueTokens(user);
+    await this.storeRefreshHash(user.id, tokens.refreshToken);
+    return { user: serializeUser(user), tokens };
+  }
+
+  /** Rotating refresh: verify, match the stored hash, issue a fresh pair. */
+  async refresh(refreshToken: string) {
+    let payload: AccessTokenPayload;
+    try {
+      payload = await this.jwt.verifyAsync<AccessTokenPayload>(refreshToken, {
+        secret: process.env.JWT_REFRESH_SECRET,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || !user.active || !user.refreshTokenHash) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+    const matches = await bcrypt.compare(refreshToken, user.refreshTokenHash);
+    if (!matches) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+    const tokens = await this.issueTokens(user);
+    await this.storeRefreshHash(user.id, tokens.refreshToken);
+    return { tokens };
+  }
+
+  async logout(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { refreshTokenHash: null },
+    });
+  }
+
+  async me(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+    return serializeUser(user);
+  }
+
+  // ── Internals ──────────────────────────────────────────────────────────────
+
+  private async issueTokens(user: User): Promise<Tokens> {
+    const payload: AccessTokenPayload = { sub: user.id, email: user.email, role: user.role };
+    // expiresIn comes from env (a string like "15m"/"30d"); cast past the `ms`
+    // StringValue template type.
+    const accessTtl = (process.env.JWT_ACCESS_TTL ?? '15m') as unknown as number;
+    const refreshTtl = (process.env.JWT_REFRESH_TTL ?? '30d') as unknown as number;
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwt.signAsync(payload, {
+        secret: process.env.JWT_ACCESS_SECRET,
+        expiresIn: accessTtl,
+      }),
+      this.jwt.signAsync(payload, {
+        secret: process.env.JWT_REFRESH_SECRET,
+        expiresIn: refreshTtl,
+      }),
+    ]);
+    return { accessToken, refreshToken };
+  }
+
+  private async storeRefreshHash(userId: string, refreshToken: string): Promise<void> {
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { refreshTokenHash } });
+  }
+}

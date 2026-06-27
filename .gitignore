@@ -1,0 +1,24 @@
+# dependencies
+/node_modules
+
+# build
+/dist
+*.tsbuildinfo
+
+# generated OpenAPI spec (re-created on every server boot)
+/openapi.json
+
+# env
+.env
+.env.local
+
+# prisma
+/prisma/*.db
+
+# uploads (keep the dir, ignore the files)
+/uploads/*
+!/uploads/.gitkeep
+
+# logs / os
+*.log
+.DS_Store

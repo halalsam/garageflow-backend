@@ -1,0 +1,252 @@
+// GarageFlow — Prisma schema.
+// Money columns are Int paise. Enums are UPPER_SNAKE. IDs are UUID.
+// Serializers (src/common/serializers.ts) close the gap to the mobile contract.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  TECH
+  MANAGER
+  ADMIN
+}
+
+model Workshop {
+  id        String   @id @default(uuid())
+  name      String // "Main Street Motors"
+  gstin     String? // "27ABCDE1234F1Z5"
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id               String   @id @default(uuid())
+  name             String
+  email            String   @unique
+  passwordHash     String
+  role             UserRole @default(TECH)
+  phone            String?
+  initials         String // "AP"
+  color            String   @default("a") // avatar key a..f
+  avatarUrl        String?
+  active           Boolean  @default(true)
+  refreshTokenHash String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  jobs              Job[]              @relation("JobTech")
+  timelineEntries   JobTimelineEntry[]
+  estimatesSubmitted Estimate[]        @relation("EstimateSubmitter")
+  estimatesDecided  Estimate[]         @relation("EstimateDecider")
+  paymentsTaken     Payment[]
+  expensesCreated   Expense[]
+}
+
+model Customer {
+  id        String    @id @default(uuid())
+  name      String
+  initials  String
+  color     String    @default("c")
+  phone     String?
+  vehicles  Vehicle[]
+  jobs      Job[]
+  invoices  Invoice[]
+  createdAt DateTime  @default(now())
+}
+
+enum VehicleType {
+  HATCHBACK
+  SEDAN
+  SUV
+  MUV
+  OTHER
+}
+
+model Vehicle {
+  id         String      @id @default(uuid())
+  customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String
+  plate      String // "DL 3C AT 7788"
+  make       String // "Tata"
+  model      String // "Nexon"
+  year       Int
+  type       VehicleType @default(OTHER)
+  jobs       Job[]
+  invoices   Invoice[]
+  createdAt  DateTime    @default(now())
+}
+
+enum JobStatus {
+  IN_PROGRESS
+  AWAITING_PART
+  REVIEW
+  COMPLETED
+}
+
+enum Priority {
+  HIGH
+  NORMAL
+}
+
+model Job {
+  id         String   @id @default(uuid())
+  code       String   @unique // "j1"-style short code
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicleId  String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+  tech       User?    @relation("JobTech", fields: [techId], references: [id])
+  techId     String?
+  status     JobStatus @default(IN_PROGRESS)
+  bay        String?
+  priority   Priority  @default(NORMAL)
+  complaint  String?
+  odometer   Int?
+  progress   Int       @default(0) // 0-100
+
+  timeline JobTimelineEntry[]
+  estimate Estimate?
+  invoice  Invoice?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum TimelineKind {
+  SYSTEM
+  TEXT
+  PHOTO
+  VOICE
+  PART
+}
+
+model JobTimelineEntry {
+  id         String       @id @default(uuid())
+  job        Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId      String
+  kind       TimelineKind
+  author     User?        @relation(fields: [authorId], references: [id])
+  authorId   String?
+  text       String? // TEXT / SYSTEM body
+  tag        String? // PHOTO label "BEFORE · BLOWER"
+  imageUrl   String? // PHOTO
+  audioUrl   String? // VOICE
+  durationMs Int? // VOICE
+  partName   String? // PART
+  qty        Int?
+  pricePaise Int?
+  systemTone String? // "purple" | "green"  (SYSTEM only)
+  systemIcon String? // "shield-check" | "check-circle"
+  at         DateTime     @default(now())
+}
+
+enum CatalogueKind {
+  PART
+  SERVICE
+}
+
+model CatalogueItem {
+  id         String        @id @default(uuid())
+  name       String
+  sku        String // "BRP-091" or "Labour"
+  kind       CatalogueKind
+  stock      Int? // parts only
+  pricePaise Int
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+}
+
+enum EstimateStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+model Estimate {
+  id            String         @id @default(uuid())
+  job           Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId         String         @unique
+  submittedBy   User           @relation("EstimateSubmitter", fields: [submittedById], references: [id])
+  submittedById String
+  status        EstimateStatus @default(PENDING)
+  gstRate       Int            @default(18) // percent
+  lines         EstimateLine[]
+  decidedBy     User?          @relation("EstimateDecider", fields: [decidedById], references: [id])
+  decidedById   String?
+  createdAt     DateTime       @default(now())
+}
+
+model EstimateLine {
+  id          String   @id @default(uuid())
+  estimate    Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  estimateId  String
+  label       String // "Front brake pads"
+  note        String // "2 × ₹2,400" or "Labour"
+  amountPaise Int
+}
+
+model Invoice {
+  id         String        @id @default(uuid())
+  number     String        @unique // "INV-2048"
+  job        Job?          @relation(fields: [jobId], references: [id])
+  jobId      String?       @unique
+  customer   Customer      @relation(fields: [customerId], references: [id])
+  customerId String
+  vehicle    Vehicle?      @relation(fields: [vehicleId], references: [id])
+  vehicleId  String? // car/plate header; job-linked invoices fall back to job.vehicle
+  gstRate    Int           @default(18)
+  issuedAt   DateTime // → date "26 Jun 2026" + issuedAt ISO
+  lines      InvoiceLine[]
+  payments   Payment[]
+  createdAt  DateTime      @default(now())
+  // subtotal/gst/total + paid/balance/status are DERIVED, never stored.
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid())
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId   String
+  label       String
+  note        String
+  amountPaise Int
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  invoice     Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId   String
+  amountPaise Int
+  method      PaymentMethod
+  takenBy     User?         @relation(fields: [takenById], references: [id])
+  takenById   String?
+  at          DateTime      @default(now())
+}
+
+enum ExpenseCategory {
+  PARTS
+  SALARIES
+  RENT
+  UTILITIES
+  MISC
+}
+
+model Expense {
+  id          String          @id @default(uuid())
+  title       String
+  category    ExpenseCategory
+  amountPaise Int
+  spentAt     DateTime // → "23 Jun 2026" + ISO
+  createdBy   User?           @relation(fields: [createdById], references: [id])
+  createdById String?
+}

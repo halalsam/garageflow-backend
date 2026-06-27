@@ -1,0 +1,154 @@
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  estimateInclude,
+  invoiceInclude,
+  serializeApproval,
+  serializeInvoice,
+} from '../common/serializers';
+import { toPaise } from '../common/format';
+import { AuthUser } from '../common/decorators/current-user.decorator';
+import { SubmitEstimateDto } from './dto/submit-estimate.dto';
+
+@Injectable()
+export class EstimatesService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  // Submit (or resubmit) an estimate for a job → sets the job to REVIEW.
+  async submit(jobCode: string, dto: SubmitEstimateDto, user: AuthUser) {
+    const job = await this.prisma.job.findUnique({ where: { code: jobCode } });
+    if (!job) throw new NotFoundException('Job not found');
+
+    const lineData = dto.lines.map((l) => ({
+      label: l.label,
+      note: l.note,
+      amountPaise: toPaise(l.amount),
+    }));
+
+    // One estimate per job (jobId @unique): replace lines on resubmit.
+    const existing = await this.prisma.estimate.findUnique({ where: { jobId: job.id } });
+    if (existing) {
+      await this.prisma.estimateLine.deleteMany({ where: { estimateId: existing.id } });
+      await this.prisma.estimate.update({
+        where: { id: existing.id },
+        data: {
+          submittedById: user.id,
+          status: 'PENDING',
+          gstRate: dto.gstRate ?? 18,
+          decidedById: null,
+          lines: { create: lineData },
+        },
+      });
+    } else {
+      await this.prisma.estimate.create({
+        data: {
+          jobId: job.id,
+          submittedById: user.id,
+          gstRate: dto.gstRate ?? 18,
+          lines: { create: lineData },
+        },
+      });
+    }
+
+    await this.prisma.job.update({ where: { id: job.id }, data: { status: 'REVIEW' } });
+    return this.getApproval(jobCode);
+  }
+
+  async listApprovals() {
+    const estimates = await this.prisma.estimate.findMany({
+      where: { status: 'PENDING' },
+      include: estimateInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+    return estimates.map(serializeApproval);
+  }
+
+  async getApproval(jobCode: string) {
+    const estimate = await this.prisma.estimate.findFirst({
+      where: { job: { code: jobCode } },
+      include: estimateInclude,
+    });
+    if (!estimate) throw new NotFoundException('Approval not found');
+    return serializeApproval(estimate);
+  }
+
+  // Approve → generate an Invoice from the estimate + advance the job.
+  // Decline → back to the tech. Records decidedBy either way.
+  async decide(jobCode: string, decision: 'approve' | 'decline', user: AuthUser) {
+    const estimate = await this.prisma.estimate.findFirst({
+      where: { job: { code: jobCode } },
+      include: { ...estimateInclude, job: { include: { vehicle: true, customer: true, invoice: true } } },
+    });
+    if (!estimate) throw new NotFoundException('Approval not found');
+    if (estimate.status !== 'PENDING') {
+      throw new ConflictException('This estimate has already been decided');
+    }
+
+    if (decision === 'decline') {
+      await this.prisma.estimate.update({
+        where: { id: estimate.id },
+        data: { status: 'DECLINED', decidedById: user.id },
+      });
+      await this.prisma.job.update({
+        where: { id: estimate.jobId },
+        data: { status: 'IN_PROGRESS' },
+      });
+      await this.systemEntry(estimate.jobId, 'Estimate declined · back to technician', 'purple');
+      return { message: 'Estimate declined', invoice: null };
+    }
+
+    // approve
+    await this.prisma.estimate.update({
+      where: { id: estimate.id },
+      data: { status: 'APPROVED', decidedById: user.id },
+    });
+
+    let invoiceId = estimate.job.invoice?.id;
+    if (!invoiceId) {
+      const number = await this.nextInvoiceNumber();
+      const invoice = await this.prisma.invoice.create({
+        data: {
+          number,
+          jobId: estimate.jobId,
+          customerId: estimate.job.customerId,
+          vehicleId: estimate.job.vehicleId,
+          gstRate: estimate.gstRate,
+          issuedAt: new Date(),
+          lines: {
+            create: estimate.lines.map((l) => ({
+              label: l.label,
+              note: l.note,
+              amountPaise: l.amountPaise,
+            })),
+          },
+        },
+      });
+      invoiceId = invoice.id;
+    }
+
+    await this.prisma.job.update({
+      where: { id: estimate.jobId },
+      data: { status: 'IN_PROGRESS' },
+    });
+    await this.systemEntry(estimate.jobId, 'Approved · released to technician', 'purple', 'shield-check');
+
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: invoiceInclude,
+    });
+    return { message: 'Estimate approved', invoice: invoice ? serializeInvoice(invoice) : null };
+  }
+
+  private async systemEntry(jobId: string, text: string, tone: string, icon?: string) {
+    await this.prisma.jobTimelineEntry.create({
+      data: { jobId, kind: 'SYSTEM', text, systemTone: tone, systemIcon: icon },
+    });
+  }
+
+  private async nextInvoiceNumber(): Promise<string> {
+    const count = await this.prisma.invoice.count();
+    let n = 2048 + count;
+    while (await this.prisma.invoice.findUnique({ where: { number: `INV-${n}` } })) n++;
+    return `INV-${n}`;
+  }
+}

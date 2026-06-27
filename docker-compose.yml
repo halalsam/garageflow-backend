@@ -1,0 +1,24 @@
+# Postgres for local development. Host port 5433 is used to avoid clashing with
+# a Postgres already running on the default 5432 — keep it in sync with
+# DATABASE_URL in .env.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: garageflow-backend-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: garageflow
+      POSTGRES_PASSWORD: garageflow
+      POSTGRES_DB: garageflow
+    ports:
+      - "5434:5432"
+    volumes:
+      - garageflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U garageflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  garageflow_pgdata:
