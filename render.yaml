@@ -16,10 +16,13 @@ services:
     region: singapore # closest free region to India; change if you prefer
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
-    # Seed the DB once on each deploy (seed.ts clears tables first, so re-running
-    # is safe). Migrations run at container start via the Dockerfile CMD.
-    preDeployCommand: npx prisma migrate deploy && npx prisma db seed
+    # Migrations + seed run at container start (Dockerfile CMD) — Render's free
+    # tier doesn't support preDeployCommand. seed.ts clears tables first, so it's
+    # safe on every boot; SEED_ON_START gates it (set to "false" to stop seeding
+    # once you have real demo data you want to keep).
     envVars:
+      - key: SEED_ON_START
+        value: "true"
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL

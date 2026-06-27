@@ -23,7 +23,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
-# Apply migrations, then boot. (Seeding is done once via Render's
-# preDeployCommand so it doesn't re-run on every restart — but it's safe to
-# re-run because seed.ts clears tables first.)
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# Apply migrations, optionally seed, then boot. Free tier has no
+# preDeployCommand, so this runs on every container start. Seeding is gated by
+# SEED_ON_START (seed.ts clears tables first, so re-running is safe).
+CMD ["sh", "-c", "npx prisma migrate deploy && { [ \"$SEED_ON_START\" = \"true\" ] && npx prisma db seed || true; } && node dist/main.js"]
