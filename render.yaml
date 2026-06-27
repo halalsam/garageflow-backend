@@ -1,0 +1,48 @@
+# Render Blueprint — free-tier demo of the GarageFlow API.
+# Deploy: push this repo to GitHub, then in Render → "New +" → "Blueprint",
+# pick this repo. Render reads this file and provisions both services.
+#
+# Free tier notes:
+#  - The web service spins down after ~15 min idle; first request after that
+#    cold-starts in ~30–60s. Fine for a client demo.
+#  - The free Postgres instance expires after 30 days — recreate before then.
+#  - Uploaded photos/voice notes live on the container's ephemeral disk and are
+#    lost on restart; seeded data + created jobs persist in Postgres.
+services:
+  - type: web
+    name: garageflow-api
+    runtime: docker
+    plan: free
+    region: singapore # closest free region to India; change if you prefer
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    # Seed the DB once on each deploy (seed.ts clears tables first, so re-running
+    # is safe). Migrations run at container start via the Dockerfile CMD.
+    preDeployCommand: npx prisma migrate deploy && npx prisma db seed
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: garageflow-db
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+      # PUBLIC_URL is used to build absolute /uploads file URLs. Set this to the
+      # service's own URL after the first deploy (Render shows it), or leave and
+      # update later — it only affects image/audio links, not core data.
+      - key: PUBLIC_URL
+        sync: false
+
+databases:
+  - name: garageflow-db
+    plan: free
+    region: singapore
+    databaseName: garageflow
+    user: garageflow
