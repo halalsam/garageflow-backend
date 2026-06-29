@@ -69,6 +69,7 @@ async function bootstrap() {
     .addTag('vehicles', 'Vehicle plate search')
     .addTag('team', 'Team / user management (admin)')
     .addTag('dashboard', 'Role-aware dashboard metrics')
+    .addTag('notifications', 'Expo push device-token registration')
     .addTag('health', 'Health check')
     .build();
 

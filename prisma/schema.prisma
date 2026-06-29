@@ -46,6 +46,22 @@ model User {
   paymentsTaken     Payment[]
   expensesCreated   Expense[]
   jobReads          JobRead[]
+  deviceTokens      DeviceToken[]
+}
+
+// An Expo push token for one of a user's devices. A user may have several (phone
+// + tablet). Tokens are unique globally; if the same device logs in as another
+// user the row is re-pointed to the new user (upsert on `token`).
+model DeviceToken {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  token     String   @unique // "ExponentPushToken[xxxxxxxx]"
+  platform  String? // "ios" | "android"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model Customer {

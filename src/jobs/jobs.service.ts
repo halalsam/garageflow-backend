@@ -24,6 +24,7 @@ import {
 } from '../common/enum-maps';
 import { initialsOf, toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { TimelineEntryDto } from './dto/timeline-entry.dto';
@@ -39,6 +40,7 @@ export class JobsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Reads ────────────────────────────────────────────────────────────────
@@ -213,7 +215,47 @@ export class JobsService {
         ...(dto.priority ? { priority: apiToPriority[dto.priority] } : {}),
       },
     });
+
+    // A newly-assigned tech (skip re-assigns to the same person + self-assigns).
+    if (dto.techId && dto.techId !== job.techId && dto.techId !== user.id) {
+      void this.notifyAssignment(job.id, job.code, dto.techId);
+    }
+    // Job marked complete → let the office know it's ready for delivery.
+    if (dto.status && apiToJobStatus[dto.status] === 'COMPLETED') {
+      void this.notifyCompleted(job.id, job.code, user.id);
+    }
+
     return { message: 'Job updated' };
+  }
+
+  private async notifyAssignment(jobId: string, jobCode: string, techId: string): Promise<void> {
+    const job = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      include: { vehicle: true },
+    });
+    if (!job) return;
+    await this.notifications.pushToUsers([techId], {
+      title: 'New job assigned',
+      body: `${job.vehicle.make} ${job.vehicle.model} · ${job.vehicle.plate}`,
+      data: { type: 'job_assigned', jobCode },
+    });
+  }
+
+  private async notifyCompleted(jobId: string, jobCode: string, actorId: string): Promise<void> {
+    const job = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      include: { vehicle: true },
+    });
+    if (!job) return;
+    await this.notifications.pushToRoles(
+      [UserRole.MANAGER, UserRole.ADMIN],
+      {
+        title: 'Job completed',
+        body: `${job.vehicle.plate} is ready for delivery`,
+        data: { type: 'job_completed', jobCode },
+      },
+      actorId,
+    );
   }
 
   // ── Timeline ──────────────────────────────────────────────────────────────
@@ -266,7 +308,52 @@ export class JobsService {
       data,
       include: { author: true },
     });
+
+    // Ping the other participants on a real (non-system) message. Fire-and-forget
+    // so chat latency isn't tied to Expo's push endpoint.
+    if (dto.kind !== 'system') {
+      void this.notifyNewMessage(job.id, job.code, dto.kind, user.id, entry.author?.name ?? 'Someone');
+    }
+
     return serializeTimelineItem(entry);
+  }
+
+  // Notify a job's tech + all managers/admins (minus the author) of a new chat
+  // message, deep-linking them to the job.
+  private async notifyNewMessage(
+    jobId: string,
+    jobCode: string,
+    kind: string,
+    authorId: string,
+    authorName: string,
+  ): Promise<void> {
+    const job = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      include: { vehicle: true },
+    });
+    if (!job) return;
+
+    const preview =
+      kind === 'photo'
+        ? '📷 Photo'
+        : kind === 'voice'
+          ? '🎙️ Voice note'
+          : kind === 'part'
+            ? '🔧 Added a part'
+            : 'New message';
+
+    const payload = {
+      title: `${authorName} · ${job.vehicle.plate}`,
+      body: preview,
+      data: { type: 'chat' as const, jobCode },
+    };
+
+    // The assigned tech (if they aren't the author).
+    if (job.techId && job.techId !== authorId) {
+      await this.notifications.pushToUsers([job.techId], payload);
+    }
+    // Managers + admins watching the floor (minus the author).
+    await this.notifications.pushToRoles([UserRole.MANAGER, UserRole.ADMIN], payload, authorId);
   }
 
   // ── Parts (timeline PART entries + stock decrement) ───────────────────────

@@ -21,6 +21,7 @@ import { ExpensesModule } from './expenses/expenses.module';
 import { FinanceModule } from './finance/finance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { HealthModule } from './health/health.module';
     }),
     PrismaModule,
     StorageModule,
+    NotificationsModule,
     AuthModule,
     UsersModule,
     CustomersModule,

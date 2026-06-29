@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   estimateInclude,
@@ -8,15 +9,22 @@ import {
 } from '../common/serializers';
 import { toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { NotificationsService } from '../notifications/notifications.service';
 import { SubmitEstimateDto } from './dto/submit-estimate.dto';
 
 @Injectable()
 export class EstimatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   // Submit (or resubmit) an estimate for a job → sets the job to REVIEW.
   async submit(jobCode: string, dto: SubmitEstimateDto, user: AuthUser) {
-    const job = await this.prisma.job.findUnique({ where: { code: jobCode } });
+    const job = await this.prisma.job.findUnique({
+      where: { code: jobCode },
+      include: { vehicle: true },
+    });
     if (!job) throw new NotFoundException('Job not found');
 
     const lineData = dto.lines.map((l) => ({
@@ -51,6 +59,18 @@ export class EstimatesService {
     }
 
     await this.prisma.job.update({ where: { id: job.id }, data: { status: 'REVIEW' } });
+
+    // An estimate is now awaiting a decision — ping the approvers.
+    void this.notifications.pushToRoles(
+      [UserRole.MANAGER, UserRole.ADMIN],
+      {
+        title: 'Estimate awaiting approval',
+        body: `${job.vehicle.make} ${job.vehicle.model} · ${job.vehicle.plate}`,
+        data: { type: 'estimate_submitted', jobCode },
+      },
+      user.id,
+    );
+
     return this.getApproval(jobCode);
   }
 
@@ -94,6 +114,7 @@ export class EstimatesService {
         data: { status: 'IN_PROGRESS' },
       });
       await this.systemEntry(estimate.jobId, 'Estimate declined · back to technician', 'purple');
+      this.notifyDecision(estimate, jobCode, 'decline', user.id);
       return { message: 'Estimate declined', invoice: null };
     }
 
@@ -131,12 +152,32 @@ export class EstimatesService {
       data: { status: 'IN_PROGRESS' },
     });
     await this.systemEntry(estimate.jobId, 'Approved · released to technician', 'purple', 'shield-check');
+    this.notifyDecision(estimate, jobCode, 'approve', user.id);
 
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: invoiceInclude,
     });
     return { message: 'Estimate approved', invoice: invoice ? serializeInvoice(invoice) : null };
+  }
+
+  // Tell the tech who submitted the estimate how it went. `estimate` carries the
+  // joined job + vehicle (estimateInclude + job vehicle include in `decide`).
+  private notifyDecision(
+    estimate: { submittedById: string; job: { vehicle: { plate: string } } },
+    jobCode: string,
+    decision: 'approve' | 'decline',
+    deciderId: string,
+  ): void {
+    if (estimate.submittedById === deciderId) return; // decided your own estimate
+    const approved = decision === 'approve';
+    void this.notifications.pushToUsers([estimate.submittedById], {
+      title: approved ? 'Estimate approved ✅' : 'Estimate declined',
+      body: approved
+        ? `${estimate.job.vehicle.plate} · released to you`
+        : `${estimate.job.vehicle.plate} · sent back for changes`,
+      data: { type: approved ? 'estimate_approved' : 'estimate_declined', jobCode },
+    });
   }
 
   private async systemEntry(jobId: string, text: string, tone: string, icon?: string) {
