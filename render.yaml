@@ -16,13 +16,15 @@ services:
     region: singapore # closest free region to India; change if you prefer
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
-    # Migrations + seed run at container start (Dockerfile CMD) — Render's free
-    # tier doesn't support preDeployCommand. seed.ts clears tables first, so it's
-    # safe on every boot; SEED_ON_START gates it (set to "false" to stop seeding
-    # once you have real demo data you want to keep).
+    # Migrations run at container start (Dockerfile CMD) — Render's free tier
+    # doesn't support preDeployCommand. SEED_ON_START gates the seed: it is
+    # OFF because seed.ts clears ALL tables first (it deletes users, which
+    # cascades to device tokens), so reseeding on every cold start / redeploy
+    # wipes registered push tokens and any created data. Flip to "true" only
+    # for a one-off reseed when you deliberately want fresh demo data.
     envVars:
       - key: SEED_ON_START
-        value: "true"
+        value: "false"
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
