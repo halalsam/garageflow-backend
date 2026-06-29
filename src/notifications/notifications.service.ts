@@ -98,6 +98,33 @@ export class NotificationsService {
     );
   }
 
+  /**
+   * Fire a single push to one explicit Expo token and return Expo's raw
+   * tickets, so a tester can see whether the message was accepted. Unlike the
+   * fire-and-forget paths above, this surfaces errors instead of swallowing
+   * them — it exists purely for the public /notifications/test route.
+   */
+  async sendTest(token: string, payload: PushPayload): Promise<ExpoTicket[]> {
+    const message = {
+      to: token,
+      sound: 'default',
+      title: payload.title,
+      body: payload.body,
+      data: payload.data ?? {},
+      priority: 'high',
+      channelId: 'default',
+    };
+    const res = await fetch(EXPO_PUSH_URL, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify([message]),
+    });
+    const json = (await res.json()) as { data?: ExpoTicket[] };
+    const tickets = json.data ?? [];
+    await this.handleTickets([token], tickets);
+    return tickets;
+  }
+
   // ── Internals ──────────────────────────────────────────────────────────────
 
   private async sendToTokens(tokens: string[], payload: PushPayload): Promise<void> {
