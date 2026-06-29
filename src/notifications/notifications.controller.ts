@@ -36,12 +36,17 @@ export class NotificationsController {
   @Post('test')
   @HttpCode(200)
   async test() {
-    const count = await this.notifications.pushToAll({
+    const { tokens, tickets } = await this.notifications.pushToAll({
       title: 'GarageFlow test 🔔',
       body: 'Push notifications are working.',
       data: { type: 'chat', jobCode: 'j1' },
     });
-    return { message: 'Test notification sent', devices: count };
+    return {
+      message: 'Test notification sent',
+      devices: tokens.length,
+      tokens,
+      tickets,
+    };
   }
 
   // Public test helper: push to one explicit Expo token without an auth session,

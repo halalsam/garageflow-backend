@@ -64,15 +64,21 @@ export class NotificationsService {
 
   // ── Sending ──────────────────────────────────────────────────────────────
 
-  /** Push to every registered device, regardless of user. Returns how many
-   *  device tokens were targeted (used by the public test route). */
-  async pushToAll(payload: PushPayload): Promise<number> {
+  /** Push to every registered device, regardless of user. Returns the targeted
+   *  tokens and Expo's raw tickets so the public test route can show why a push
+   *  did or didn't arrive. */
+  async pushToAll(
+    payload: PushPayload,
+  ): Promise<{ tokens: string[]; tickets: ExpoTicket[] }> {
     const devices = await this.prisma.deviceToken.findMany({
       select: { token: true },
     });
     const tokens = devices.map((d) => d.token);
-    await this.sendToTokens(tokens, payload);
-    return tokens.length;
+    const tickets: ExpoTicket[] = [];
+    for (const token of tokens) {
+      tickets.push(...(await this.sendTest(token, payload)));
+    }
+    return { tokens, tickets };
   }
 
   /** Push to every device of the given users (deduped, self-excluded by caller). */
