@@ -123,7 +123,7 @@ export class FinanceService {
           const paid = toRupees(inv.payments.reduce((s, p) => s + p.amountPaise, 0));
           closing += total - paid;
         }
-        return { name: shortName(c.name), closing, invoices: c.invoices.length };
+        return { id: c.id, name: shortName(c.name), closing, invoices: c.invoices.length };
       })
       .filter((p) => p.invoices > 0)
       .sort((a, b) => b.closing - a.closing);
