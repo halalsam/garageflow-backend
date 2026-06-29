@@ -169,7 +169,9 @@ export const serializeJob = (j: JobRow) => ({
 type TimelineRow = Prisma.JobTimelineEntryGetPayload<{ include: { author: true } }>;
 export const serializeTimelineItem = (t: TimelineRow) => {
   const time = formatTime(t.at);
-  const by = t.author ? serializePerson(t.author) : undefined;
+  // Include the author's stable id so clients can reliably tell which entries
+  // belong to the current user (initials/name alone can collide).
+  const by = t.author ? { id: t.author.id, ...serializePerson(t.author) } : undefined;
   switch (t.kind) {
     case 'SYSTEM':
       return {
