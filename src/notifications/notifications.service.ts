@@ -64,6 +64,17 @@ export class NotificationsService {
 
   // ── Sending ──────────────────────────────────────────────────────────────
 
+  /** Push to every registered device, regardless of user. Returns how many
+   *  device tokens were targeted (used by the public test route). */
+  async pushToAll(payload: PushPayload): Promise<number> {
+    const devices = await this.prisma.deviceToken.findMany({
+      select: { token: true },
+    });
+    const tokens = devices.map((d) => d.token);
+    await this.sendToTokens(tokens, payload);
+    return tokens.length;
+  }
+
   /** Push to every device of the given users (deduped, self-excluded by caller). */
   async pushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
     const ids = [...new Set(userIds)].filter(Boolean);

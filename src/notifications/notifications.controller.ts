@@ -7,8 +7,9 @@ import { RegisterTokenDto } from './dto/register-token.dto';
 import { UnregisterTokenDto } from './dto/unregister-token.dto';
 import { TestPushDto } from './dto/test-push.dto';
 
-// Device-token registry for Expo push notifications. Both routes are
-// authenticated — a token is always bound to the user that registered it.
+// Device-token registry for Expo push notifications. register/unregister are
+// authenticated (a token is bound to the user that registered it); the test
+// routes are public dev helpers for verifying push delivery.
 @ApiTags('notifications')
 @ApiBearerAuth('access-token')
 @Controller('notifications')
@@ -29,16 +30,18 @@ export class NotificationsController {
     return this.notifications.unregister(dto.token);
   }
 
-  // Dev helper: fire a test push to all of the current user's devices.
+  // Public test helper: broadcast a test push to every registered device.
+  // No auth — intended purely for verifying push end-to-end from curl.
+  @Public()
   @Post('test')
   @HttpCode(200)
-  async test(@CurrentUser('id') userId: string) {
-    await this.notifications.pushToUsers([userId], {
+  async test() {
+    const count = await this.notifications.pushToAll({
       title: 'GarageFlow test 🔔',
       body: 'Push notifications are working.',
       data: { type: 'chat', jobCode: 'j1' },
     });
-    return { message: 'Test notification sent' };
+    return { message: 'Test notification sent', devices: count };
   }
 
   // Public test helper: push to one explicit Expo token without an auth session,
