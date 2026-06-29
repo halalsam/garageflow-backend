@@ -69,6 +69,23 @@ export class JobsController {
     return this.jobs.addTimeline(id, dto, files ?? {}, user);
   }
 
+  // Mark this job's chat as read by the current user (powers read receipts).
+  @Post(':id/read')
+  markRead(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.jobs.markRead(id, user);
+  }
+
+  // Upload (or replace) one mandatory completion photo for a job side.
+  @Post(':id/completion-photos')
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
+  addCompletionPhoto(
+    @Param('id') id: string,
+    @Body('side') side: string,
+    @UploadedFiles() files: { image?: Array<{ originalname: string; buffer: Buffer }> },
+  ) {
+    return this.jobs.saveCompletionPhoto(id, side, files?.image?.[0]);
+  }
+
   @Post(':id/parts')
   addParts(@Param('id') id: string, @Body() dto: AddPartsDto, @CurrentUser() user: AuthUser) {
     return this.jobs.addParts(id, dto.items, user);

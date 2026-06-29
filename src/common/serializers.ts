@@ -37,7 +37,13 @@ export const jobInclude = Prisma.validator<Prisma.JobInclude>()({
 export const jobWithTimelineInclude = Prisma.validator<Prisma.JobInclude>()({
   ...jobInclude,
   timeline: { include: { author: true }, orderBy: { at: 'asc' } },
+  reads: { include: { user: true } },
+  completionPhotos: true,
 });
+
+// The four required walk-around sides, in display order.
+export const COMPLETION_SIDES = ['FRONT', 'BACK', 'LEFT', 'RIGHT'] as const;
+export type CompletionSide = (typeof COMPLETION_SIDES)[number];
 
 export const estimateInclude = Prisma.validator<Prisma.EstimateInclude>()({
   job: { include: { vehicle: true, customer: true } },
@@ -169,6 +175,8 @@ export const serializeJob = (j: JobRow) => ({
 type TimelineRow = Prisma.JobTimelineEntryGetPayload<{ include: { author: true } }>;
 export const serializeTimelineItem = (t: TimelineRow) => {
   const time = formatTime(t.at);
+  // ISO timestamp lets clients compare against per-user read markers.
+  const atISO = t.at.toISOString();
   // Include the author's stable id so clients can reliably tell which entries
   // belong to the current user (initials/name alone can collide).
   const by = t.author ? { id: t.author.id, ...serializePerson(t.author) } : undefined;
@@ -181,15 +189,16 @@ export const serializeTimelineItem = (t: TimelineRow) => {
         icon: t.systemIcon ?? undefined,
       };
     case 'TEXT':
-      return { kind: 'text' as const, by, text: t.text ?? '', time };
+      return { kind: 'text' as const, by, text: t.text ?? '', time, atISO };
     case 'PHOTO':
-      return { kind: 'photo' as const, by, tag: t.tag ?? undefined, time, uri: t.imageUrl ?? undefined };
+      return { kind: 'photo' as const, by, tag: t.tag ?? undefined, time, atISO, uri: t.imageUrl ?? undefined };
     case 'VOICE':
       return {
         kind: 'voice' as const,
         by,
         dur: formatDuration(t.durationMs ?? 0),
         time,
+        atISO,
         uri: t.audioUrl ?? undefined,
       };
     case 'PART':
@@ -200,11 +209,26 @@ export const serializeTimelineItem = (t: TimelineRow) => {
         qty: t.qty ?? 0,
         price: toRupees(t.pricePaise ?? 0),
         time,
+        atISO,
       };
     default:
-      return { kind: timelineKindToApi[t.kind], time };
+      return { kind: timelineKindToApi[t.kind], time, atISO };
   }
 };
+
+// Per-user read markers for a job: who has read the chat and up to when.
+type ReadRow = Prisma.JobReadGetPayload<{ include: { user: true } }>;
+export const serializeRead = (r: ReadRow) => ({
+  by: { id: r.user.id, ...serializePerson(r.user) },
+  atISO: r.at.toISOString(),
+});
+
+// Mandatory completion photo. Side is lower-cased for the client.
+type CompletionPhotoRow = Prisma.CompletionPhotoGetPayload<{}>;
+export const serializeCompletionPhoto = (p: CompletionPhotoRow) => ({
+  side: p.side.toLowerCase() as Lowercase<CompletionSide>,
+  uri: p.url,
+});
 
 // ── Approval (a PENDING estimate) ────────────────────────────────────────────
 type EstimateRow = Prisma.EstimateGetPayload<{ include: typeof estimateInclude }>;

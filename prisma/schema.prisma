@@ -45,6 +45,7 @@ model User {
   estimatesDecided  Estimate[]         @relation("EstimateDecider")
   paymentsTaken     Payment[]
   expensesCreated   Expense[]
+  jobReads          JobRead[]
 }
 
 model Customer {
@@ -112,9 +113,37 @@ model Job {
   timeline JobTimelineEntry[]
   estimate Estimate?
   invoice  Invoice?
+  reads    JobRead[]
+  completionPhotos CompletionPhoto[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// The four mandatory walk-around photos a technician must capture before a job
+// can be completed. One row per side; upserted as the tech (re)takes a side.
+model CompletionPhoto {
+  id     String   @id @default(uuid())
+  job    Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId  String
+  side   String // FRONT | BACK | LEFT | RIGHT
+  url    String
+  at     DateTime @default(now())
+
+  @@unique([jobId, side])
+}
+
+// Per-user read marker for a job chat. `at` is the moment the user last opened
+// the timeline; a message is "seen by" a user when their `at` >= message time.
+model JobRead {
+  id     String   @id @default(uuid())
+  job    Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId  String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  at     DateTime @default(now())
+
+  @@unique([userId, jobId])
 }
 
 enum TimelineKind {

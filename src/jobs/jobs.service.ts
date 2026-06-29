@@ -12,6 +12,9 @@ import {
   jobWithTimelineInclude,
   serializeJob,
   serializeTimelineItem,
+  serializeRead,
+  serializeCompletionPhoto,
+  COMPLETION_SIDES,
 } from '../common/serializers';
 import {
   apiToJobStatus,
@@ -69,7 +72,43 @@ export class JobsService {
     return {
       ...serializeJob(job),
       timeline: job.timeline.map(serializeTimelineItem),
+      reads: job.reads.map(serializeRead),
+      completionPhotos: job.completionPhotos.map(serializeCompletionPhoto),
     };
+  }
+
+  // Mark the chat as read by the current user up to now. Idempotent upsert of
+  // the per-user/per-job read marker.
+  async markRead(code: string, user: AuthUser) {
+    const job = await this.prisma.job.findUnique({ where: { code }, select: { id: true } });
+    if (!job) throw new NotFoundException('Job not found');
+    await this.prisma.jobRead.upsert({
+      where: { userId_jobId: { userId: user.id, jobId: job.id } },
+      create: { userId: user.id, jobId: job.id },
+      update: { at: new Date() },
+    });
+    return { message: 'ok' };
+  }
+
+  // Save (or replace) one mandatory completion photo for a job side.
+  async saveCompletionPhoto(
+    code: string,
+    side: string,
+    file?: { originalname: string; buffer: Buffer },
+  ) {
+    const job = await this.resolveJob(code);
+    const SIDE = side?.toUpperCase();
+    if (!COMPLETION_SIDES.includes(SIDE as (typeof COMPLETION_SIDES)[number])) {
+      throw new BadRequestException('Invalid side');
+    }
+    if (!file) throw new BadRequestException('Photo required');
+    const url = await this.storage.save(file, `jobs/${job.id}/completion`);
+    await this.prisma.completionPhoto.upsert({
+      where: { jobId_side: { jobId: job.id, side: SIDE } },
+      create: { jobId: job.id, side: SIDE, url },
+      update: { url, at: new Date() },
+    });
+    return this.findOne(code);
   }
 
   // ── Create job card ──────────────────────────────────────────────────────
@@ -149,6 +188,20 @@ export class JobsService {
     if (dto.techId) {
       const tech = await this.prisma.user.findUnique({ where: { id: dto.techId } });
       if (!tech) throw new NotFoundException('Technician not found');
+    }
+    // Gate completion on the four mandatory walk-around photos.
+    if (dto.status && apiToJobStatus[dto.status] === 'COMPLETED') {
+      const have = await this.prisma.completionPhoto.findMany({
+        where: { jobId: job.id },
+        select: { side: true },
+      });
+      const missing = COMPLETION_SIDES.filter((s) => !have.some((p) => p.side === s));
+      if (missing.length) {
+        throw new BadRequestException({
+          message: 'Add all completion photos before marking the job complete',
+          errors: { completionPhotos: missing.map((s) => `${s} photo required`) },
+        });
+      }
     }
     await this.prisma.job.update({
       where: { id: job.id },
