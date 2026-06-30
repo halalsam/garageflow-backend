@@ -66,7 +66,7 @@ services:
       # S3_ENDPOINT unset for AWS (it's only for S3-compatible stores like R2).
       # Set the secrets in the Render dashboard (sync: false).
       - key: S3_REGION
-        value: eu-north-1 # Stockholm; must match the bucket's region
+        value: ap-south-1 # Mumbai; must match the bucket's region
       - key: S3_BUCKET
         sync: false
       - key: S3_ACCESS_KEY_ID
