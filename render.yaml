@@ -6,9 +6,20 @@
 #  - The web service spins down after ~15 min idle; first request after that
 #    cold-starts in ~30–60s. Fine for a client demo.
 #  - The free Postgres instance expires after 30 days — recreate before then.
-#  - Uploaded photos/voice notes live on the container's ephemeral disk and are
-#    lost on restart; seeded data + created jobs persist in Postgres.
+#  - The free Key Value (Redis) instance is non-persistent — fine here, it only
+#    backs the socket.io pub/sub adapter (no durable data is stored in it).
+#  - With S3_* set, uploads are presigned straight to S3 and survive restarts;
+#    without it, files fall back to the container's ephemeral disk.
 services:
+  # Redis-compatible Key Value store backing the socket.io redis-adapter so
+  # timeline broadcasts fan out across web instances. Free plan = no persistence,
+  # internal-only (empty ipAllowList). Pub/sub only, no durable data.
+  - type: keyvalue
+    name: garageflow-redis
+    plan: free
+    region: singapore
+    ipAllowList: []
+
   - type: web
     name: garageflow-api
     runtime: docker
@@ -43,6 +54,28 @@ services:
       # service's own URL after the first deploy (Render shows it), or leave and
       # update later — it only affects image/audio links, not core data.
       - key: PUBLIC_URL
+        sync: false
+      # Internal connection string to the Key Value service above.
+      - key: REDIS_URL
+        fromService:
+          name: garageflow-redis
+          type: keyvalue
+          property: connectionString
+      # --- AWS S3 presigned uploads --------------------------------------------
+      # When S3_BUCKET is set, photo uploads presign straight to S3. Leave
+      # S3_ENDPOINT unset for AWS (it's only for S3-compatible stores like R2).
+      # Set the secrets in the Render dashboard (sync: false).
+      - key: S3_REGION
+        value: eu-north-1 # Stockholm; must match the bucket's region
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # Public base for served files. For AWS, set to
+      # https://<bucket>.s3.<region>.amazonaws.com (or your CloudFront domain).
+      - key: S3_PUBLIC_URL
         sync: false
 
 databases:
