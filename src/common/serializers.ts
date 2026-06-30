@@ -198,6 +198,10 @@ export const serializeEvent = (e: EventRow) => {
       return { ...base, by, body: e.body ?? '' };
     case 'PHOTO':
       return { ...base, by, payload };
+    case 'VOICE':
+      // payload: { url, durationMs } — the audio is uploaded via presign, only
+      // its URL rides the event (never the file itself).
+      return { ...base, by, payload };
     case 'STATUS_CHANGE':
       return { ...base, by, payload };
     case 'APPROVAL':

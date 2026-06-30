@@ -19,6 +19,12 @@ const EXT_BY_TYPE: Record<string, string> = {
   'image/webp': '.webp',
   'image/heic': '.heic',
   'image/gif': '.gif',
+  // Voice notes (expo-audio records .m4a/aac on both platforms).
+  'audio/m4a': '.m4a',
+  'audio/mp4': '.m4a',
+  'audio/aac': '.aac',
+  'audio/mpeg': '.mp3',
+  'audio/webm': '.webm',
 };
 
 // Local-disk storage that returns a public URL, plus a presigned-upload path so

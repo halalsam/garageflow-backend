@@ -309,7 +309,11 @@ export class JobsService {
 
     // Ping the other participants on a real message. Fire-and-forget so send
     // latency isn't tied to Expo's push endpoint.
-    if (dto.type === JobEventType.COMMENT || dto.type === JobEventType.PHOTO) {
+    if (
+      dto.type === JobEventType.COMMENT ||
+      dto.type === JobEventType.PHOTO ||
+      dto.type === JobEventType.VOICE
+    ) {
       const author = await this.prisma.user.findUnique({
         where: { id: user.id },
         select: { name: true },
@@ -344,7 +348,12 @@ export class JobsService {
     });
     if (!job) return;
 
-    const preview = type === JobEventType.PHOTO ? '📷 Photo' : 'New message';
+    const preview =
+      type === JobEventType.PHOTO
+        ? '📷 Photo'
+        : type === JobEventType.VOICE
+          ? '🎤 Voice note'
+          : 'New message';
 
     const payload = {
       title: `${authorName} · ${job.vehicle.plate}`,

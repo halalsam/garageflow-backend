@@ -171,6 +171,7 @@ enum JobEventType {
   STATUS_CHANGE
   PART_ADDED
   PHOTO
+  VOICE
   APPROVAL
   SYSTEM
 }
