@@ -10,6 +10,7 @@ const prisma = new PrismaClient({
 });
 
 const rupees = (n: number) => n * 100; // → paise
+const publicUrl = process.env.PUBLIC_URL ?? 'http://localhost:3000';
 const DEV_PASSWORD = 'password123';
 const utc = (s: string) => new Date(`${s}.000Z`);
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000);
@@ -20,7 +21,7 @@ async function clear() {
   await prisma.invoice.deleteMany();
   await prisma.estimateLine.deleteMany();
   await prisma.estimate.deleteMany();
-  await prisma.jobTimelineEntry.deleteMany();
+  await prisma.jobCardEvent.deleteMany();
   await prisma.job.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.catalogueItem.deleteMany();
@@ -113,19 +114,18 @@ async function main() {
     },
   });
 
-  // ── Timelines (j1 + j4) ────────────────────────────────────────────────────
-  await prisma.jobTimelineEntry.createMany({
+  // ── Timelines / events (j1 + j4) ───────────────────────────────────────────
+  await prisma.jobCardEvent.createMany({
     data: [
-      { jobId: j1.id, kind: 'SYSTEM', text: 'Approved by Priya · 8:30 AM', systemTone: 'purple', systemIcon: 'shield-check', at: utc('2026-06-27T08:30:00') },
-      { jobId: j1.id, kind: 'TEXT', authorId: arjun.id, text: 'Customer says noise starts after 10 min of driving. Please check blower motor first.', at: utc('2026-06-27T08:34:00') },
-      { jobId: j1.id, kind: 'PHOTO', authorId: arjun.id, tag: 'BEFORE · BLOWER', at: utc('2026-06-27T08:52:00') },
-      { jobId: j1.id, kind: 'VOICE', authorId: arjun.id, durationMs: 24000, at: utc('2026-06-27T09:05:00') },
-      { jobId: j1.id, kind: 'PART', authorId: arjun.id, partName: 'Blower Motor Assembly', qty: 1, pricePaise: rupees(2400), at: utc('2026-06-27T09:12:00') },
+      { jobId: j1.id, type: 'SYSTEM', body: 'Approved by Priya · 8:30 AM', createdAt: utc('2026-06-27T08:30:00') },
+      { jobId: j1.id, type: 'COMMENT', authorId: arjun.id, body: 'Customer says noise starts after 10 min of driving. Please check blower motor first.', createdAt: utc('2026-06-27T08:34:00') },
+      { jobId: j1.id, type: 'PHOTO', authorId: arjun.id, payload: { tag: 'BEFORE · BLOWER', url: `${publicUrl}/uploads/seed/blower-before.jpg` }, createdAt: utc('2026-06-27T08:52:00') },
+      { jobId: j1.id, type: 'PART_ADDED', authorId: arjun.id, payload: { partName: 'Blower Motor Assembly', qty: 1, pricePaise: rupees(2400) }, createdAt: utc('2026-06-27T09:12:00') },
 
-      { jobId: j4.id, kind: 'SYSTEM', text: 'Approved · released to Arjun', systemTone: 'purple', systemIcon: 'shield-check', at: utc('2026-06-26T11:18:00') },
-      { jobId: j4.id, kind: 'TEXT', authorId: arjun.id, text: 'Brake pads replaced, fluid flushed. Test drive done — pedal firm now.', at: utc('2026-06-26T11:20:00') },
-      { jobId: j4.id, kind: 'PHOTO', authorId: arjun.id, tag: 'AFTER · BRAKES', at: utc('2026-06-26T11:22:00') },
-      { jobId: j4.id, kind: 'SYSTEM', text: 'Marked complete · 11:25 AM', systemTone: 'green', systemIcon: 'check-circle', at: utc('2026-06-26T11:25:00') },
+      { jobId: j4.id, type: 'SYSTEM', body: 'Approved · released to Arjun', createdAt: utc('2026-06-26T11:18:00') },
+      { jobId: j4.id, type: 'COMMENT', authorId: arjun.id, body: 'Brake pads replaced, fluid flushed. Test drive done — pedal firm now.', createdAt: utc('2026-06-26T11:20:00') },
+      { jobId: j4.id, type: 'PHOTO', authorId: arjun.id, payload: { tag: 'AFTER · BRAKES', url: `${publicUrl}/uploads/seed/brakes-after.jpg` }, createdAt: utc('2026-06-26T11:22:00') },
+      { jobId: j4.id, type: 'STATUS_CHANGE', authorId: arjun.id, payload: { from: 'REVIEW', to: 'COMPLETED' }, createdAt: utc('2026-06-26T11:25:00') },
     ],
   });
 
