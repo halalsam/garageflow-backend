@@ -12,7 +12,7 @@ import type Redis from 'ioredis';
 import { Server, Socket } from 'socket.io';
 import { ACCESS_TOKEN_SECRET, AccessTokenPayload } from '../auth/access-token';
 import { AuthUser } from '../common/decorators/current-user.decorator';
-import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { REDIS_CLIENT, attachRedisErrorLogger } from '../common/redis/redis.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertJobAccess } from './job-access';
 
@@ -38,8 +38,8 @@ export class JobEventsGateway implements OnGatewayInit, OnGatewayConnection {
 
   afterInit(server: Server) {
     // Two dedicated connections (pub/sub) for the adapter; never the request client.
-    const pub = this.redis.duplicate();
-    const sub = this.redis.duplicate();
+    const pub = attachRedisErrorLogger(this.redis.duplicate(), 'pub');
+    const sub = attachRedisErrorLogger(this.redis.duplicate(), 'sub');
     server.adapter(createAdapter(pub, sub));
     this.logger.log('Redis adapter attached');
   }
