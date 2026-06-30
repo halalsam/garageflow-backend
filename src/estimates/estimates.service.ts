@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { JobEventType, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   estimateInclude,
@@ -10,6 +10,7 @@ import {
 import { toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { NotificationsService } from '../notifications/notifications.service';
+import { JobEventsService } from '../jobs/job-events.service';
 import { SubmitEstimateDto } from './dto/submit-estimate.dto';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class EstimatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly events: JobEventsService,
   ) {}
 
   // Submit (or resubmit) an estimate for a job → sets the job to REVIEW.
@@ -59,6 +61,11 @@ export class EstimatesService {
     }
 
     await this.prisma.job.update({ where: { id: job.id }, data: { status: 'REVIEW' } });
+
+    await this.events.emit(job.id, {
+      type: JobEventType.SYSTEM,
+      body: 'Estimate submitted for approval',
+    });
 
     // An estimate is now awaiting a decision — ping the approvers.
     void this.notifications.pushToRoles(
@@ -113,7 +120,12 @@ export class EstimatesService {
         where: { id: estimate.jobId },
         data: { status: 'IN_PROGRESS' },
       });
-      await this.systemEntry(estimate.jobId, 'Estimate declined · back to technician', 'purple');
+      await this.events.emit(estimate.jobId, {
+        type: JobEventType.APPROVAL,
+        authorId: user.id,
+        body: 'Estimate declined · back to technician',
+        payload: { decision: 'decline' },
+      });
       this.notifyDecision(estimate, jobCode, 'decline', user.id);
       return { message: 'Estimate declined', invoice: null };
     }
@@ -151,7 +163,12 @@ export class EstimatesService {
       where: { id: estimate.jobId },
       data: { status: 'IN_PROGRESS' },
     });
-    await this.systemEntry(estimate.jobId, 'Approved · released to technician', 'purple', 'shield-check');
+    await this.events.emit(estimate.jobId, {
+      type: JobEventType.APPROVAL,
+      authorId: user.id,
+      body: 'Approved · released to technician',
+      payload: { decision: 'approve' },
+    });
     this.notifyDecision(estimate, jobCode, 'approve', user.id);
 
     const invoice = await this.prisma.invoice.findUnique({
@@ -177,12 +194,6 @@ export class EstimatesService {
         ? `${estimate.job.vehicle.plate} · released to you`
         : `${estimate.job.vehicle.plate} · sent back for changes`,
       data: { type: approved ? 'estimate_approved' : 'estimate_declined', jobCode },
-    });
-  }
-
-  private async systemEntry(jobId: string, text: string, tone: string, icon?: string) {
-    await this.prisma.jobTimelineEntry.create({
-      data: { jobId, kind: 'SYSTEM', text, systemTone: tone, systemIcon: icon },
     });
   }
 

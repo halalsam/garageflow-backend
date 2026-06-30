@@ -6,7 +6,6 @@ import {
   JobStatus,
   PaymentMethod,
   Priority,
-  TimelineKind,
   UserRole,
   VehicleType,
 } from '@prisma/client';
@@ -76,22 +75,6 @@ export const catalogueKindToApi: Record<CatalogueKind, 'part' | 'service'> = {
 export const apiToCatalogueKind: Record<string, CatalogueKind> = {
   part: CatalogueKind.PART,
   service: CatalogueKind.SERVICE,
-};
-
-// ── Timeline kind ────────────────────────────────────────────────────────────
-export const timelineKindToApi: Record<TimelineKind, string> = {
-  SYSTEM: 'system',
-  TEXT: 'text',
-  PHOTO: 'photo',
-  VOICE: 'voice',
-  PART: 'part',
-};
-export const apiToTimelineKind: Record<string, TimelineKind> = {
-  system: TimelineKind.SYSTEM,
-  text: TimelineKind.TEXT,
-  photo: TimelineKind.PHOTO,
-  voice: TimelineKind.VOICE,
-  part: TimelineKind.PART,
 };
 
 // ── Payment method (Title-case out) ──────────────────────────────────────────

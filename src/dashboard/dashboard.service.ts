@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { JobEventType, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { FinanceService } from '../finance/finance.service';
 import {
@@ -60,42 +60,37 @@ export class DashboardService {
   }
 
   private async recentActivity(techScope: { techId?: string }) {
-    const entries = await this.prisma.jobTimelineEntry.findMany({
+    const events = await this.prisma.jobCardEvent.findMany({
       where: techScope.techId ? { job: { techId: techScope.techId } } : {},
       include: { author: true, job: { include: { vehicle: true } } },
-      orderBy: { at: 'desc' },
+      orderBy: { createdAt: 'desc' },
       take: 8,
     });
-    return entries.map((e) => ({
+    return events.map((e) => ({
       id: e.id,
       text: this.activityText(e),
       plate: e.job.vehicle.plate,
       by: e.author?.name,
-      time: formatTime(e.at),
-      tone: e.systemTone ?? undefined,
-      icon: e.systemIcon ?? undefined,
+      time: formatTime(e.createdAt),
     }));
   }
 
-  private activityText(e: {
-    kind: string;
-    text: string | null;
-    partName: string | null;
-    qty: number | null;
-    tag: string | null;
-  }): string {
-    switch (e.kind) {
-      case 'SYSTEM':
-      case 'TEXT':
-        return e.text ?? '';
-      case 'PART':
-        return `Added part · ${e.partName ?? ''}${e.qty ? ` ×${e.qty}` : ''}`;
-      case 'PHOTO':
-        return `Photo · ${e.tag ?? 'attached'}`;
-      case 'VOICE':
-        return 'Voice note added';
+  private activityText(e: { type: JobEventType; body: string | null; payload: Prisma.JsonValue }): string {
+    const payload = (e.payload ?? {}) as Record<string, unknown>;
+    switch (e.type) {
+      case JobEventType.COMMENT:
+      case JobEventType.SYSTEM:
+        return e.body ?? '';
+      case JobEventType.PART_ADDED:
+        return `Added part · ${payload.partName ?? ''}${payload.qty ? ` ×${payload.qty}` : ''}`;
+      case JobEventType.PHOTO:
+        return `Photo · ${payload.tag ?? 'attached'}`;
+      case JobEventType.STATUS_CHANGE:
+        return `Status · ${payload.from ?? ''} → ${payload.to ?? ''}`;
+      case JobEventType.APPROVAL:
+        return e.body ?? `Estimate ${payload.decision ?? 'updated'}`;
       default:
-        return '';
+        return e.body ?? '';
     }
   }
 }

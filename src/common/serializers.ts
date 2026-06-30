@@ -8,12 +8,10 @@ import {
   paymentMethodToApi,
   priorityToApi,
   roleToApi,
-  timelineKindToApi,
   vehicleTypeToApi,
 } from './enum-maps';
 import {
   formatDate,
-  formatDuration,
   formatTime,
   isoDate,
   relativeTime,
@@ -34,11 +32,17 @@ export const jobInclude = Prisma.validator<Prisma.JobInclude>()({
   invoice: { include: { lines: true, payments: true } },
 });
 
-export const jobWithTimelineInclude = Prisma.validator<Prisma.JobInclude>()({
+// Job detail: events now live behind the paginated /events endpoint, so the
+// job card only embeds read markers + completion photos.
+export const jobDetailInclude = Prisma.validator<Prisma.JobInclude>()({
   ...jobInclude,
-  timeline: { include: { author: true }, orderBy: { at: 'asc' } },
   reads: { include: { user: true } },
   completionPhotos: true,
+});
+
+// JobCardEvent always carries its author for serialization.
+export const eventInclude = Prisma.validator<Prisma.JobCardEventInclude>()({
+  author: true,
 });
 
 // The four required walk-around sides, in display order.
@@ -171,48 +175,46 @@ export const serializeJob = (j: JobRow) => ({
   amount: jobAmount(j),
 });
 
-// ── Timeline ─────────────────────────────────────────────────────────────────
-type TimelineRow = Prisma.JobTimelineEntryGetPayload<{ include: { author: true } }>;
-export const serializeTimelineItem = (t: TimelineRow) => {
-  const time = formatTime(t.at);
-  // ISO timestamp lets clients compare against per-user read markers.
-  const atISO = t.at.toISOString();
-  // Include the author's stable id so clients can reliably tell which entries
-  // belong to the current user (initials/name alone can collide).
-  const by = t.author ? { id: t.author.id, ...serializePerson(t.author) } : undefined;
-  switch (t.kind) {
-    case 'SYSTEM':
-      return {
-        kind: 'system' as const,
-        text: t.text ?? '',
-        tone: (t.systemTone as 'purple' | 'green') ?? 'purple',
-        icon: t.systemIcon ?? undefined,
-      };
-    case 'TEXT':
-      return { kind: 'text' as const, by, text: t.text ?? '', time, atISO };
+// ── Job-card event (polymorphic timeline) ────────────────────────────────────
+type EventRow = Prisma.JobCardEventGetPayload<{ include: typeof eventInclude }>;
+
+// One row → a discriminated-union DTO keyed on `type`. `payload` carries the
+// type-specific fields; money inside it is converted paise → rupees here, the
+// same boundary every other serializer enforces.
+export const serializeEvent = (e: EventRow) => {
+  // Author id lets clients tell which events are their own (initials collide).
+  const by = e.author ? { id: e.author.id, ...serializePerson(e.author) } : undefined;
+  const base = {
+    id: e.id,
+    type: e.type,
+    createdAt: e.createdAt.toISOString(),
+    time: formatTime(e.createdAt),
+    ...(e.clientId ? { clientId: e.clientId } : {}),
+  };
+  const payload = (e.payload ?? undefined) as Record<string, unknown> | undefined;
+
+  switch (e.type) {
+    case 'COMMENT':
+      return { ...base, by, body: e.body ?? '' };
     case 'PHOTO':
-      return { kind: 'photo' as const, by, tag: t.tag ?? undefined, time, atISO, uri: t.imageUrl ?? undefined };
-    case 'VOICE':
+      return { ...base, by, payload };
+    case 'STATUS_CHANGE':
+      return { ...base, by, payload };
+    case 'APPROVAL':
+      return { ...base, by, payload };
+    case 'PART_ADDED': {
+      // Stored as pricePaise; expose `price` in rupees to match the contract.
+      const p = (payload ?? {}) as { partName?: string; qty?: number; pricePaise?: number };
       return {
-        kind: 'voice' as const,
+        ...base,
         by,
-        dur: formatDuration(t.durationMs ?? 0),
-        time,
-        atISO,
-        uri: t.audioUrl ?? undefined,
+        payload: { partName: p.partName ?? '', qty: p.qty ?? 0, price: toRupees(p.pricePaise ?? 0) },
       };
-    case 'PART':
-      return {
-        kind: 'part' as const,
-        by,
-        name: t.partName ?? '',
-        qty: t.qty ?? 0,
-        price: toRupees(t.pricePaise ?? 0),
-        time,
-        atISO,
-      };
+    }
+    case 'SYSTEM':
+      return { ...base, body: e.body ?? '', ...(payload ? { payload } : {}) };
     default:
-      return { kind: timelineKindToApi[t.kind], time, atISO };
+      return { ...base, by, body: e.body ?? undefined, payload };
   }
 };
 

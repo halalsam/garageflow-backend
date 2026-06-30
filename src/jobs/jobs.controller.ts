@@ -11,12 +11,13 @@ import {
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { JobsService, UploadedTimelineFiles } from './jobs.service';
+import { JobsService } from './jobs.service';
 import { EstimatesService } from '../estimates/estimates.service';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
-import { TimelineEntryDto } from './dto/timeline-entry.dto';
+import { CreateEventDto } from './dto/create-event.dto';
+import { ListEventsDto } from './dto/list-events.dto';
 import { AddPartsDto } from './dto/add-parts.dto';
 import { SubmitEstimateDto } from '../estimates/dto/submit-estimate.dto';
 
@@ -53,20 +54,35 @@ export class JobsController {
     return this.jobs.update(id, dto, user);
   }
 
-  @Post(':id/timeline')
-  @UseInterceptors(
-    FileFieldsInterceptor([
-      { name: 'image', maxCount: 1 },
-      { name: 'audio', maxCount: 1 },
-    ]),
-  )
-  addTimeline(
+  // Paginated, newest-first timeline events (cursor pagination).
+  @Get(':id/events')
+  listEvents(
     @Param('id') id: string,
-    @Body() dto: TimelineEntryDto,
-    @UploadedFiles() files: UploadedTimelineFiles,
+    @Query() query: ListEventsDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.jobs.addTimeline(id, dto, files ?? {}, user);
+    return this.jobs.listEvents(id, user, query);
+  }
+
+  // Create an event (JSON). Persists then broadcasts over the socket gateway.
+  @Post(':id/events')
+  createEvent(
+    @Param('id') id: string,
+    @Body() dto: CreateEventDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.jobs.createEvent(id, user, dto);
+  }
+
+  // Presigned upload for a photo: PUT the file to `uploadUrl`, then POST a PHOTO
+  // event whose payload.url is the returned `fileUrl`.
+  @Post(':id/uploads/presign')
+  presignUpload(
+    @Param('id') id: string,
+    @Body('contentType') contentType: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.jobs.presignUpload(id, user, contentType);
   }
 
   // Mark this job's chat as read by the current user (powers read receipts).
