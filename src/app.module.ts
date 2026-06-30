@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './common/storage/storage.module';
+import { RedisModule } from './common/redis/redis.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
@@ -34,6 +35,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     }),
     PrismaModule,
     StorageModule,
+    RedisModule,
     NotificationsModule,
     AuthModule,
     UsersModule,

@@ -20,5 +20,19 @@ services:
       timeout: 5s
       retries: 10
 
+  # Redis backs the socket.io redis-adapter so timeline broadcasts fan out across
+  # multiple backend instances. Keep the port in sync with REDIS_URL in .env.
+  redis:
+    image: redis:7-alpine
+    container_name: garageflow-backend-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   garageflow_pgdata:
