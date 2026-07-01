@@ -102,6 +102,17 @@ export class JobsController {
     return this.jobs.saveCompletionPhoto(id, side, files?.image?.[0]);
   }
 
+  // Upload (or replace) one mandatory delivery walk-around photo for a job side.
+  @Post(':id/delivery-photos')
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
+  addDeliveryPhoto(
+    @Param('id') id: string,
+    @Body('side') side: string,
+    @UploadedFiles() files: { image?: Array<{ originalname: string; buffer: Buffer }> },
+  ) {
+    return this.jobs.saveDeliveryPhoto(id, side, files?.image?.[0]);
+  }
+
   @Post(':id/parts')
   addParts(@Param('id') id: string, @Body() dto: AddPartsDto, @CurrentUser() user: AuthUser) {
     return this.jobs.addParts(id, dto.items, user);

@@ -38,6 +38,7 @@ export const jobDetailInclude = Prisma.validator<Prisma.JobInclude>()({
   ...jobInclude,
   reads: { include: { user: true } },
   completionPhotos: true,
+  deliveryPhotos: true,
 });
 
 // JobCardEvent always carries its author for serialization.
@@ -105,6 +106,7 @@ export const serializeVehicle = (v: VehicleRow) => ({
   model: v.model,
   year: v.year,
   type: vehicleTypeToApi[v.type],
+  photoUrl: v.photoUrl ?? undefined,
 });
 
 type CustomerRow = Prisma.CustomerGetPayload<{ include: typeof customerInclude }>;
@@ -160,11 +162,13 @@ const jobAmount = (j: JobRow): number | undefined => {
 
 export const serializeJob = (j: JobRow) => ({
   id: j.code,
+  vehicleId: j.vehicleId,
   plate: j.vehicle.plate,
   make: j.vehicle.make,
   model: j.vehicle.model,
   year: j.vehicle.year,
   type: vehicleTypeToApi[j.vehicle.type],
+  photoUrl: j.vehicle.photoUrl ?? undefined,
   bay: j.bay ?? undefined,
   customer: serializePerson(j.customer),
   tech: j.tech ? serializePerson(j.tech) : undefined,
@@ -236,6 +240,13 @@ export const serializeCompletionPhoto = (p: CompletionPhotoRow) => ({
   uri: p.url,
 });
 
+// Walk-around photo captured at hand-off. Same shape as completion.
+type DeliveryPhotoRow = Prisma.DeliveryPhotoGetPayload<{}>;
+export const serializeDeliveryPhoto = (p: DeliveryPhotoRow) => ({
+  side: p.side.toLowerCase() as Lowercase<CompletionSide>,
+  uri: p.url,
+});
+
 // ── Approval (a PENDING estimate) ────────────────────────────────────────────
 type EstimateRow = Prisma.EstimateGetPayload<{ include: typeof estimateInclude }>;
 export const serializeApproval = (e: EstimateRow) => {
@@ -245,6 +256,7 @@ export const serializeApproval = (e: EstimateRow) => {
     plate: e.job.vehicle.plate,
     car: `${e.job.vehicle.make} ${e.job.vehicle.model}`,
     customer: shortName(e.job.customer.name),
+    customerPhone: e.job.customer.phone ?? undefined,
     submittedBy: serializePerson(e.submittedBy),
     ago: relativeTime(e.createdAt),
     lines: e.lines.map(serializeLine),

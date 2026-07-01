@@ -40,6 +40,7 @@ model User {
   updatedAt        DateTime @updatedAt
 
   jobs              Job[]              @relation("JobTech")
+  jobsDelivered     Job[]              @relation("JobDeliveredBy")
   events            JobCardEvent[]
   estimatesSubmitted Estimate[]        @relation("EstimateSubmitter")
   estimatesDecided  Estimate[]         @relation("EstimateDecider")
@@ -93,6 +94,7 @@ model Vehicle {
   model      String // "Nexon"
   year       Int
   type       VehicleType @default(OTHER)
+  photoUrl   String? // optional photo captured when the vehicle is added
   jobs       Job[]
   invoices   Invoice[]
   createdAt  DateTime    @default(now())
@@ -103,6 +105,7 @@ enum JobStatus {
   AWAITING_PART
   REVIEW
   COMPLETED
+  DELIVERED
 }
 
 enum Priority {
@@ -126,11 +129,20 @@ model Job {
   odometer   Int?
   progress   Int       @default(0) // 0-100
 
+  // Hand-off to the customer. Set when status moves to DELIVERED; the note is
+  // text and/or a voice recording captured in the guided delivery flow.
+  deliveredAt          DateTime?
+  deliveredBy          User?     @relation("JobDeliveredBy", fields: [deliveredById], references: [id])
+  deliveredById        String?
+  deliveryNote         String?
+  deliveryNoteAudioUrl String?
+
   events   JobCardEvent[]
   estimate Estimate?
   invoice  Invoice?
   reads    JobRead[]
   completionPhotos CompletionPhoto[]
+  deliveryPhotos   DeliveryPhoto[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -145,6 +157,20 @@ model CompletionPhoto {
   side   String // FRONT | BACK | LEFT | RIGHT
   url    String
   at     DateTime @default(now())
+
+  @@unique([jobId, side])
+}
+
+// The four mandatory walk-around photos captured at hand-off, mirroring
+// CompletionPhoto but for the delivery stage. Kept separate so each set of
+// four sides can coexist and be bundled/shared independently.
+model DeliveryPhoto {
+  id    String   @id @default(uuid())
+  job   Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId String
+  side  String // FRONT | BACK | LEFT | RIGHT
+  url   String
+  at    DateTime @default(now())
 
   @@unique([jobId, side])
 }

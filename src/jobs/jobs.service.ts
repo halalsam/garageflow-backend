@@ -13,6 +13,7 @@ import {
   serializeJob,
   serializeRead,
   serializeCompletionPhoto,
+  serializeDeliveryPhoto,
   COMPLETION_SIDES,
 } from '../common/serializers';
 import {
@@ -71,8 +72,14 @@ export class JobsService {
     if (!job) throw new NotFoundException('Job not found');
     return {
       ...serializeJob(job),
+      // Phone powers the manager's call / WhatsApp actions; not on the generic
+      // Person shape so it only rides the detail payload.
+      customerPhone: job.customer.phone ?? undefined,
       reads: job.reads.map(serializeRead),
       completionPhotos: job.completionPhotos.map(serializeCompletionPhoto),
+      deliveryPhotos: job.deliveryPhotos.map(serializeDeliveryPhoto),
+      deliveryNote: job.deliveryNote ?? undefined,
+      deliveryNoteAudioUrl: job.deliveryNoteAudioUrl ?? undefined,
     };
   }
 
@@ -96,10 +103,7 @@ export class JobsService {
     file?: { originalname: string; buffer: Buffer },
   ) {
     const job = await this.resolveJob(code);
-    const SIDE = side?.toUpperCase();
-    if (!COMPLETION_SIDES.includes(SIDE as (typeof COMPLETION_SIDES)[number])) {
-      throw new BadRequestException('Invalid side');
-    }
+    const SIDE = this.validSide(side);
     if (!file) throw new BadRequestException('Photo required');
     const url = await this.storage.save(file, `jobs/${job.id}/completion`);
     await this.prisma.completionPhoto.upsert({
@@ -108,6 +112,30 @@ export class JobsService {
       update: { url, at: new Date() },
     });
     return this.findOne(code);
+  }
+
+  // Save (or replace) one mandatory delivery walk-around photo for a job side.
+  async saveDeliveryPhoto(
+    code: string,
+    side: string,
+    file?: { originalname: string; buffer: Buffer },
+  ) {
+    const job = await this.resolveJob(code);
+    const SIDE = this.validSide(side);
+    if (!file) throw new BadRequestException('Photo required');
+    const url = await this.storage.save(file, `jobs/${job.id}/delivery`);
+    await this.prisma.deliveryPhoto.upsert({
+      where: { jobId_side: { jobId: job.id, side: SIDE } },
+      create: { jobId: job.id, side: SIDE, url },
+      update: { url, at: new Date() },
+    });
+    return this.findOne(code);
+  }
+
+  private validSide(side: string): (typeof COMPLETION_SIDES)[number] {
+    const SIDE = side?.toUpperCase() as (typeof COMPLETION_SIDES)[number];
+    if (!COMPLETION_SIDES.includes(SIDE)) throw new BadRequestException('Invalid side');
+    return SIDE;
   }
 
   // ── Create job card ──────────────────────────────────────────────────────
@@ -202,6 +230,28 @@ export class JobsService {
         });
       }
     }
+    // Gate delivery on the four mandatory delivery walk-around photos + a
+    // hand-off note (typed or a voice recording).
+    const deliverdNow = dto.status && apiToJobStatus[dto.status] === 'DELIVERED';
+    if (deliverdNow) {
+      const have = await this.prisma.deliveryPhoto.findMany({
+        where: { jobId: job.id },
+        select: { side: true },
+      });
+      const missing = COMPLETION_SIDES.filter((s) => !have.some((p) => p.side === s));
+      if (missing.length) {
+        throw new BadRequestException({
+          message: 'Add all delivery photos before marking the vehicle delivered',
+          errors: { deliveryPhotos: missing.map((s) => `${s} photo required`) },
+        });
+      }
+      if (!dto.deliveryNote?.trim() && !dto.deliveryNoteAudioUrl?.trim()) {
+        throw new BadRequestException({
+          message: 'Add a hand-off note (text or voice) before delivering',
+          errors: { deliveryNote: ['A delivery note is required'] },
+        });
+      }
+    }
     await this.prisma.job.update({
       where: { id: job.id },
       data: {
@@ -210,6 +260,14 @@ export class JobsService {
         ...(dto.techId !== undefined ? { techId: dto.techId || null } : {}),
         ...(dto.bay !== undefined ? { bay: dto.bay } : {}),
         ...(dto.priority ? { priority: apiToPriority[dto.priority] } : {}),
+        ...(deliverdNow
+          ? {
+              deliveredAt: new Date(),
+              deliveredById: user.id,
+              deliveryNote: dto.deliveryNote?.trim() || null,
+              deliveryNoteAudioUrl: dto.deliveryNoteAudioUrl?.trim() || null,
+            }
+          : {}),
       },
     });
 
@@ -233,6 +291,14 @@ export class JobsService {
     // Job marked complete → let the office know it's ready for delivery.
     if (dto.status && apiToJobStatus[dto.status] === 'COMPLETED') {
       void this.notifyCompleted(job.id, job.code, user.id);
+    }
+    // Vehicle handed to the customer → log it on the timeline + notify the office.
+    if (newStatus === 'DELIVERED' && job.status !== 'DELIVERED') {
+      await this.events.emit(job.id, {
+        type: JobEventType.SYSTEM,
+        body: 'Vehicle delivered to customer',
+      });
+      void this.notifyDelivered(job.id, job.code, user.id);
     }
 
     return { message: 'Job updated' };
@@ -263,6 +329,23 @@ export class JobsService {
         title: 'Job completed',
         body: `${job.vehicle.plate} is ready for delivery`,
         data: { type: 'job_completed', jobCode },
+      },
+      actorId,
+    );
+  }
+
+  private async notifyDelivered(jobId: string, jobCode: string, actorId: string): Promise<void> {
+    const job = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      include: { vehicle: true },
+    });
+    if (!job) return;
+    await this.notifications.pushToRoles(
+      [UserRole.MANAGER, UserRole.ADMIN],
+      {
+        title: 'Vehicle delivered',
+        body: `${job.vehicle.plate} was delivered to the customer`,
+        data: { type: 'job_delivered', jobCode },
       },
       actorId,
     );

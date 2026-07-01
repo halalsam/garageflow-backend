@@ -18,6 +18,7 @@ export const jobStatusToApi: Record<JobStatus, { status: string; tone: Tone }> =
   AWAITING_PART: { status: 'AWAITING PART', tone: 'amber' },
   REVIEW: { status: 'REVIEW', tone: 'purple' },
   COMPLETED: { status: 'COMPLETED', tone: 'green' },
+  DELIVERED: { status: 'DELIVERED', tone: 'gray' },
 };
 
 export const apiToJobStatus: Record<string, JobStatus> = {
@@ -27,6 +28,7 @@ export const apiToJobStatus: Record<string, JobStatus> = {
   AWAITING_PART: JobStatus.AWAITING_PART,
   REVIEW: JobStatus.REVIEW,
   COMPLETED: JobStatus.COMPLETED,
+  DELIVERED: JobStatus.DELIVERED,
 };
 
 // ── Priority ─────────────────────────────────────────────────────────────────

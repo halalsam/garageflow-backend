@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { VehiclesService } from './vehicles.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
@@ -22,5 +32,15 @@ export class VehiclesController {
   @Post()
   create(@Body() dto: CreateVehicleDto) {
     return this.vehicles.create(dto);
+  }
+
+  // Upload (or replace) the vehicle photo (multipart `image`).
+  @Post(':id/photo')
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
+  addPhoto(
+    @Param('id') id: string,
+    @UploadedFiles() files: { image?: Array<{ originalname: string; buffer: Buffer }> },
+  ) {
+    return this.vehicles.savePhoto(id, files?.image?.[0]);
   }
 }

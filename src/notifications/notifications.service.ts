@@ -12,7 +12,8 @@ export type PushData = {
     | 'estimate_approved'
     | 'estimate_declined'
     | 'job_assigned'
-    | 'job_completed';
+    | 'job_completed'
+    | 'job_delivered';
   jobCode?: string;
   [key: string]: unknown;
 };
