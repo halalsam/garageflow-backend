@@ -23,9 +23,11 @@ export class InvoicesService {
     return serialized;
   }
 
+  // Looks up by invoice UUID, falling back to the job code ("j12") so links
+  // built from a job screen resolve that job's invoice directly.
   async findOne(id: string) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id },
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { OR: [{ id }, { job: { code: id } }] },
       include: invoiceInclude,
     });
     if (!invoice) throw new NotFoundException('Invoice not found');

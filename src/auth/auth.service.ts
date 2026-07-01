@@ -21,9 +21,9 @@ export class AuthService {
 
   // ── Public flows ───────────────────────────────────────────────────────────
 
-  /** Token-based login. Returns the user (with role for direct routing) + tokens. */
+  /** Token-based login (email or phone). Returns the user + tokens. */
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
+    const user = await this.findByIdentifier(dto.email);
     if (!user || !user.active) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -34,6 +34,21 @@ export class AuthService {
     const tokens = await this.issueTokens(user);
     await this.storeRefreshHash(user.id, tokens.refreshToken);
     return { user: serializeUser(user), tokens };
+  }
+
+  // Resolve "email or phone". Phones match on their last 10 digits, so
+  // "+91 98200 11223", "98200 11223" and "9820011223" all find the same user
+  // regardless of how the number was stored. Staff lists are tiny, so the
+  // in-memory scan is fine.
+  private async findByIdentifier(identifier: string) {
+    const id = identifier.trim();
+    if (id.includes('@')) {
+      return this.prisma.user.findUnique({ where: { email: id.toLowerCase() } });
+    }
+    const digits = id.replace(/\D/g, '').slice(-10);
+    if (digits.length < 7) return null;
+    const users = await this.prisma.user.findMany({ where: { phone: { not: null } } });
+    return users.find((u) => u.phone!.replace(/\D/g, '').endsWith(digits)) ?? null;
   }
 
   /** Rotating refresh: verify, match the stored hash, issue a fresh pair. */

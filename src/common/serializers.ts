@@ -177,6 +177,8 @@ export const serializeJob = (j: JobRow) => ({
   complaint: j.complaint ?? undefined,
   progress: j.progress ?? undefined,
   amount: jobAmount(j),
+  // Present once an estimate is approved — routes the app's Invoice button.
+  invoiceId: j.invoice?.id ?? undefined,
 });
 
 // ── Job-card event (polymorphic timeline) ────────────────────────────────────

@@ -12,6 +12,19 @@ export type PresignedUpload = {
   headers: Record<string, string>;
 };
 
+const TYPE_BY_EXT: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.heic': 'image/heic',
+  '.gif': 'image/gif',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.mp3': 'audio/mpeg',
+  '.webm': 'audio/webm',
+};
+
 const EXT_BY_TYPE: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/jpg': '.jpg',
@@ -39,18 +52,56 @@ export class StorageService {
   // token → target for the local presigned PUT fallback (one-time, single-node).
   private readonly pending = new Map<string, { rel: string; contentType: string }>();
 
-  /** Persist a multer file and return its absolute public URL. */
+  /** Persist a multer file and return its absolute public URL. Goes to S3 when
+   *  configured (survives restarts); falls back to local disk for dev. */
   async save(file: { originalname: string; buffer: Buffer }, subdir = ''): Promise<string> {
+    const ext = extname(file.originalname).toLowerCase();
+    const name = `${randomUUID()}${ext}`;
+    const rel = [subdir, name].filter(Boolean).join('/');
+
+    if (this.s3Bucket) {
+      await this.s3Client().send(
+        new PutObjectCommand({
+          Bucket: this.s3Bucket,
+          Key: rel,
+          Body: file.buffer,
+          ContentType: TYPE_BY_EXT[ext] ?? 'application/octet-stream',
+        }),
+      );
+      return `${this.s3PublicBase()}/${rel}`;
+    }
+
     const dir = join(this.uploadDir, subdir);
     await mkdir(dir, { recursive: true });
-    const name = `${randomUUID()}${extname(file.originalname) || ''}`;
     await writeFile(join(dir, name), file.buffer);
-    const rel = [subdir, name].filter(Boolean).join('/');
     return `${this.publicUrl}/uploads/${rel}`;
   }
 
   private get s3Bucket(): string | undefined {
     return process.env.S3_BUCKET || undefined;
+  }
+
+  private s3Client(): S3Client {
+    return new S3Client({
+      region: process.env.S3_REGION ?? 'auto',
+      endpoint: process.env.S3_ENDPOINT,
+      forcePathStyle: !!process.env.S3_ENDPOINT,
+      credentials:
+        process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
+          ? {
+              accessKeyId: process.env.S3_ACCESS_KEY_ID,
+              secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+            }
+          : undefined,
+    });
+  }
+
+  private s3PublicBase(): string {
+    if (process.env.S3_PUBLIC_URL) return process.env.S3_PUBLIC_URL.replace(/\/+$/, '');
+    if (process.env.S3_ENDPOINT) {
+      return `${process.env.S3_ENDPOINT.replace(/\/+$/, '')}/${this.s3Bucket}`;
+    }
+    return `https://${this.s3Bucket}.s3.${process.env.S3_REGION ?? 'us-east-1'}.amazonaws.com`;
   }
 
   /** A presigned PUT the client uploads to, plus the resulting public file URL. */
@@ -59,29 +110,14 @@ export class StorageService {
     const rel = [subdir, name].filter(Boolean).join('/');
 
     if (this.s3Bucket) {
-      const client = new S3Client({
-        region: process.env.S3_REGION ?? 'auto',
-        endpoint: process.env.S3_ENDPOINT,
-        forcePathStyle: !!process.env.S3_ENDPOINT,
-        credentials:
-          process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
-            ? {
-                accessKeyId: process.env.S3_ACCESS_KEY_ID,
-                secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
-              }
-            : undefined,
-      });
       const uploadUrl = await getSignedUrl(
-        client,
+        this.s3Client(),
         new PutObjectCommand({ Bucket: this.s3Bucket, Key: rel, ContentType: contentType }),
         { expiresIn: 600 },
       );
-      const base =
-        process.env.S3_PUBLIC_URL ??
-        `${process.env.S3_ENDPOINT ?? ''}/${this.s3Bucket}`.replace(/\/+$/, '');
       return {
         uploadUrl,
-        fileUrl: `${base}/${rel}`,
+        fileUrl: `${this.s3PublicBase()}/${rel}`,
         method: 'PUT',
         headers: { 'Content-Type': contentType },
       };

@@ -225,7 +225,7 @@ export class JobsService {
       const missing = COMPLETION_SIDES.filter((s) => !have.some((p) => p.side === s));
       if (missing.length) {
         throw new BadRequestException({
-          message: 'Add all completion photos before marking the job complete',
+          message: 'Add all four arrival photos before marking the job complete',
           errors: { completionPhotos: missing.map((s) => `${s} photo required`) },
         });
       }
