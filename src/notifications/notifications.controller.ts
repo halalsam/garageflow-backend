@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -15,6 +15,20 @@ import { TestPushDto } from './dto/test-push.dto';
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}
+
+  // The current user's inbox (persisted copies of pushes), newest first, plus
+  // the unread count for badges.
+  @Get()
+  inbox(@CurrentUser('id') userId: string) {
+    return this.notifications.inbox(userId);
+  }
+
+  // Mark the whole inbox read (called when the user opens the inbox screen).
+  @Post('read')
+  @HttpCode(200)
+  markAllRead(@CurrentUser('id') userId: string) {
+    return this.notifications.markAllRead(userId);
+  }
 
   // Register (or re-point) this device's Expo push token to the current user.
   @Post('register')

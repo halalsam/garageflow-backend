@@ -171,7 +171,8 @@ export const serializeJob = (j: JobRow) => ({
   photoUrl: j.vehicle.photoUrl ?? undefined,
   bay: j.bay ?? undefined,
   customer: serializePerson(j.customer),
-  tech: j.tech ? serializePerson(j.tech) : undefined,
+  // `id` rides along so the app can match the assigned tech against /team.
+  tech: j.tech ? { id: j.tech.id, ...serializePerson(j.tech) } : undefined,
   ...jobStatusToApi[j.status],
   priority: priorityToApi[j.priority],
   complaint: j.complaint ?? undefined,

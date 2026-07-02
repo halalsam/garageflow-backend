@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterTokenDto } from './dto/register-token.dto';
 
@@ -82,10 +82,25 @@ export class NotificationsService {
     return { tokens, tickets };
   }
 
-  /** Push to every device of the given users (deduped, self-excluded by caller). */
+  /** Push to every device of the given users (deduped, self-excluded by caller).
+   *  Every recipient also gets an inbox row, so users without a registered
+   *  device (or who missed the push) can still find the notification in-app. */
   async pushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
     const ids = [...new Set(userIds)].filter(Boolean);
     if (ids.length === 0) return;
+    try {
+      await this.prisma.notification.createMany({
+        data: ids.map((userId) => ({
+          userId,
+          title: payload.title,
+          body: payload.body,
+          data: (payload.data as Prisma.InputJsonValue) ?? undefined,
+        })),
+      });
+    } catch (err) {
+      // The inbox is best-effort, like the push itself.
+      this.logger.error(`Failed to persist notifications: ${String(err)}`);
+    }
     const devices = await this.prisma.deviceToken.findMany({
       where: { userId: { in: ids } },
       select: { token: true },
@@ -94,6 +109,40 @@ export class NotificationsService {
       devices.map((d) => d.token),
       payload,
     );
+  }
+
+  // ── Inbox ──────────────────────────────────────────────────────────────────
+
+  /** The current user's inbox, newest first, plus their unread count. */
+  async inbox(userId: string) {
+    const [rows, unread] = await Promise.all([
+      this.prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.notification.count({ where: { userId, readAt: null } }),
+    ]);
+    return {
+      items: rows.map((n) => ({
+        id: n.id,
+        title: n.title,
+        body: n.body,
+        data: (n.data ?? undefined) as PushData | undefined,
+        atISO: n.createdAt.toISOString(),
+        read: n.readAt !== null,
+      })),
+      unread,
+    };
+  }
+
+  /** Mark the current user's whole inbox as read. */
+  async markAllRead(userId: string) {
+    await this.prisma.notification.updateMany({
+      where: { userId, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { message: 'Notifications marked read' };
   }
 
   /**

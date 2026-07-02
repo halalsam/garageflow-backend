@@ -48,6 +48,7 @@ model User {
   expensesCreated   Expense[]
   jobReads          JobRead[]
   deviceTokens      DeviceToken[]
+  notifications     Notification[]
 }
 
 // An Expo push token for one of a user's devices. A user may have several (phone
@@ -63,6 +64,22 @@ model DeviceToken {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+// A persisted copy of every push sent to a user — the in-app inbox fallback
+// for missed notifications. `data` mirrors the push's deep-link payload
+// (PushData: type + jobCode), `readAt` flips when the user opens the inbox.
+model Notification {
+  id        String    @id @default(uuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  title     String
+  body      String
+  data      Json?
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  @@index([userId, createdAt])
 }
 
 model Customer {
