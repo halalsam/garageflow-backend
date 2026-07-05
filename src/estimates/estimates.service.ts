@@ -11,6 +11,7 @@ import { toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { NotificationsService } from '../notifications/notifications.service';
 import { JobEventsService } from '../jobs/job-events.service';
+import { WorkshopsService } from '../workshops/workshops.service';
 import { SubmitEstimateDto } from './dto/submit-estimate.dto';
 
 @Injectable()
@@ -19,7 +20,18 @@ export class EstimatesService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly events: JobEventsService,
+    private readonly workshops: WorkshopsService,
   ) {}
+
+  // The workshop's configured GST rate — the default when an estimate doesn't
+  // specify one explicitly.
+  async defaultGstRate(): Promise<number> {
+    try {
+      return (await this.workshops.activeRow()).gstRate;
+    } catch {
+      return 18;
+    }
+  }
 
   // Submit (or resubmit) an estimate for a job → sets the job to REVIEW.
   async submit(jobCode: string, dto: SubmitEstimateDto, user: AuthUser) {
@@ -35,6 +47,8 @@ export class EstimatesService {
       amountPaise: toPaise(l.amount),
     }));
 
+    const gstRate = dto.gstRate ?? (await this.defaultGstRate());
+
     // One estimate per job (jobId @unique): replace lines on resubmit.
     const existing = await this.prisma.estimate.findUnique({ where: { jobId: job.id } });
     if (existing) {
@@ -44,7 +58,7 @@ export class EstimatesService {
         data: {
           submittedById: user.id,
           status: 'PENDING',
-          gstRate: dto.gstRate ?? 18,
+          gstRate,
           decidedById: null,
           lines: { create: lineData },
         },
@@ -54,7 +68,7 @@ export class EstimatesService {
         data: {
           jobId: job.id,
           submittedById: user.id,
-          gstRate: dto.gstRate ?? 18,
+          gstRate,
           lines: { create: lineData },
         },
       });
@@ -198,9 +212,15 @@ export class EstimatesService {
   }
 
   private async nextInvoiceNumber(): Promise<string> {
+    let prefix = 'INV';
+    try {
+      prefix = (await this.workshops.activeRow()).invoicePrefix;
+    } catch {
+      // no workshop configured yet — keep the default prefix
+    }
     const count = await this.prisma.invoice.count();
     let n = 2048 + count;
-    while (await this.prisma.invoice.findUnique({ where: { number: `INV-${n}` } })) n++;
-    return `INV-${n}`;
+    while (await this.prisma.invoice.findUnique({ where: { number: `${prefix}-${n}` } })) n++;
+    return `${prefix}-${n}`;
   }
 }

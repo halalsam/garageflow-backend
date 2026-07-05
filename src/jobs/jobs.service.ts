@@ -25,6 +25,7 @@ import {
 import { initialsOf, toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EstimatesService } from '../estimates/estimates.service';
 import { JobEventsService } from './job-events.service';
 import { assertJobAccess } from './job-access';
 import { CreateJobDto } from './dto/create-job.dto';
@@ -40,6 +41,7 @@ export class JobsService {
     private readonly storage: StorageService,
     private readonly notifications: NotificationsService,
     private readonly events: JobEventsService,
+    private readonly estimates: EstimatesService,
   ) {}
 
   // ── Reads ────────────────────────────────────────────────────────────────
@@ -189,7 +191,7 @@ export class JobsService {
         data: {
           jobId: job.id,
           submittedById: user.id,
-          gstRate: 18,
+          gstRate: await this.estimates.defaultGstRate(),
           lines: {
             create: dto.lines.map((l) => ({
               label: l.label,
@@ -216,20 +218,8 @@ export class JobsService {
       const tech = await this.prisma.user.findUnique({ where: { id: dto.techId } });
       if (!tech) throw new NotFoundException('Technician not found');
     }
-    // Gate completion on the four mandatory walk-around photos.
-    if (dto.status && apiToJobStatus[dto.status] === 'COMPLETED') {
-      const have = await this.prisma.completionPhoto.findMany({
-        where: { jobId: job.id },
-        select: { side: true },
-      });
-      const missing = COMPLETION_SIDES.filter((s) => !have.some((p) => p.side === s));
-      if (missing.length) {
-        throw new BadRequestException({
-          message: 'Add all four arrival photos before marking the job complete',
-          errors: { completionPhotos: missing.map((s) => `${s} photo required`) },
-        });
-      }
-    }
+    // Arrival photos are captured when the job card is created, so completion
+    // is no longer gated on them (legacy jobs without photos stay completable).
     // Gate delivery on the four mandatory delivery walk-around photos + a
     // hand-off note (typed or a voice recording).
     const deliverdNow = dto.status && apiToJobStatus[dto.status] === 'DELIVERED';

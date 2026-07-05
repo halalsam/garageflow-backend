@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 import { serializePerson, serializeVehicle } from '../common/serializers';
-import { apiToVehicleType } from '../common/enum-maps';
+import { apiToVehicleType, jobStatusToApi } from '../common/enum-maps';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 
 @Injectable()
@@ -12,18 +13,41 @@ export class VehiclesService {
     private readonly storage: StorageService,
   ) {}
 
-  // Plate search powers job/new + tech search. Bare array; includes the owner.
-  async search(plate?: string) {
+  // Vehicle search. `plate` keeps the original narrow plate lookup (job/new);
+  // `q` is the global search — it matches the plate, the customer's name, or
+  // the make/model, across every vehicle regardless of job status. Each hit
+  // carries its owner and its most recent job so results can deep-link.
+  async search(plate?: string, q?: string) {
+    const term = (q ?? '').trim();
+    const where: Prisma.VehicleWhereInput = term
+      ? {
+          OR: [
+            { plate: { contains: term, mode: 'insensitive' } },
+            { make: { contains: term, mode: 'insensitive' } },
+            { model: { contains: term, mode: 'insensitive' } },
+            { customer: { name: { contains: term, mode: 'insensitive' } } },
+          ],
+        }
+      : plate
+        ? { plate: { contains: plate, mode: 'insensitive' } }
+        : {};
     const vehicles = await this.prisma.vehicle.findMany({
-      where: plate ? { plate: { contains: plate, mode: 'insensitive' } } : {},
-      include: { customer: true },
+      where,
+      include: {
+        customer: true,
+        jobs: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
       orderBy: { plate: 'asc' },
       take: 50,
     });
-    return vehicles.map((v) => ({
-      ...serializeVehicle(v),
-      customer: serializePerson(v.customer),
-    }));
+    return vehicles.map((v) => {
+      const job = v.jobs[0];
+      return {
+        ...serializeVehicle(v),
+        customer: serializePerson(v.customer),
+        job: job ? { id: job.code, ...jobStatusToApi[job.status] } : undefined,
+      };
+    });
   }
 
   async findOne(id: string) {

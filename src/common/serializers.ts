@@ -97,6 +97,21 @@ export const serializeTeamMember = (u: UserRow) => ({
   inactive: u.active ? undefined : true,
 });
 
+// ── Workshop ─────────────────────────────────────────────────────────────────
+type WorkshopRow = Prisma.WorkshopGetPayload<{}>;
+export const serializeWorkshop = (w: WorkshopRow, effectiveActive?: boolean) => ({
+  id: w.id,
+  name: w.name,
+  gstin: w.gstin ?? undefined,
+  address: w.address ?? undefined,
+  phone: w.phone ?? undefined,
+  logoUrl: w.logoUrl ?? undefined,
+  active: (effectiveActive ?? w.active) || undefined,
+  gstRate: w.gstRate,
+  invoicePrefix: w.invoicePrefix,
+  invoiceFooter: w.invoiceFooter ?? undefined,
+});
+
 // ── Customer / Vehicle ───────────────────────────────────────────────────────
 type VehicleRow = Prisma.VehicleGetPayload<{}>;
 export const serializeVehicle = (v: VehicleRow) => ({
@@ -293,6 +308,7 @@ export const serializeInvoice = (inv: InvoiceRow) => {
     car: veh ? `${veh.make} ${veh.model}` : '',
     plate: veh?.plate ?? '',
     lines: inv.lines.map(serializeLine),
+    gstRate: inv.gstRate,
     ...totals,
     // derived, never stored:
     paid,

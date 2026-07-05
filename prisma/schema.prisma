@@ -21,6 +21,15 @@ model Workshop {
   id        String   @id @default(uuid())
   name      String // "Main Street Motors"
   gstin     String? // "27ABCDE1234F1Z5"
+  address   String?
+  phone     String?
+  logoUrl   String? // uploaded via POST /workshops/:id/logo
+  // The workshop the app currently operates as; exactly one should be active.
+  active    Boolean  @default(false)
+  // Invoice preferences (used when estimates/invoices are generated).
+  gstRate       Int     @default(18) // percent
+  invoicePrefix String  @default("INV")
+  invoiceFooter String?
   createdAt DateTime @default(now())
 }
 

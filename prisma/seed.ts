@@ -36,7 +36,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
 
   await prisma.workshop.create({
-    data: { name: 'Main Street Motors', gstin: '27ABCDE1234F1Z5' },
+    data: { name: 'Main Street Motors', gstin: '27ABCDE1234F1Z5', active: true },
   });
 
   // ── Team (Users) ───────────────────────────────────────────────────────────

@@ -20,8 +20,8 @@ export class VehiclesController {
   constructor(private readonly vehicles: VehiclesService) {}
 
   @Get()
-  search(@Query('plate') plate?: string) {
-    return this.vehicles.search(plate);
+  search(@Query('plate') plate?: string, @Query('q') q?: string) {
+    return this.vehicles.search(plate, q);
   }
 
   @Get(':id')

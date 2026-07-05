@@ -94,7 +94,9 @@ export class AuthService {
     // expiresIn comes from env (a string like "15m"/"30d"); cast past the `ms`
     // StringValue template type.
     const accessTtl = (process.env.JWT_ACCESS_TTL ?? '15m') as unknown as number;
-    const refreshTtl = (process.env.JWT_REFRESH_TTL ?? '30d') as unknown as number;
+    // Long refresh window: sessions persist until the user explicitly logs out
+    // (the token also rotates on every refresh, extending it for active users).
+    const refreshTtl = (process.env.JWT_REFRESH_TTL ?? '365d') as unknown as number;
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(payload, {
         secret: process.env.JWT_ACCESS_SECRET,

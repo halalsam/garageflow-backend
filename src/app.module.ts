@@ -13,6 +13,7 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
 
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { WorkshopsModule } from './workshops/workshops.module';
 import { CustomersModule } from './customers/customers.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { CatalogueModule } from './catalogue/catalogue.module';
@@ -39,6 +40,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     NotificationsModule,
     AuthModule,
     UsersModule,
+    WorkshopsModule,
     CustomersModule,
     VehiclesModule,
     CatalogueModule,
