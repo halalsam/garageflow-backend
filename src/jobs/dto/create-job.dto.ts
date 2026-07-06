@@ -65,6 +65,10 @@ export class CreateJobDto {
 
   @IsOptional()
   @IsString()
+  customerPhone?: string;
+
+  @IsOptional()
+  @IsString()
   complaint?: string;
 
   @IsOptional()

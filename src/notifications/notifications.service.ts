@@ -174,7 +174,7 @@ export class NotificationsService {
   async sendTest(token: string, payload: PushPayload): Promise<ExpoTicket[]> {
     const message = {
       to: token,
-      sound: 'default',
+      sound: 'notification.wav',
       title: payload.title,
       body: payload.body,
       data: payload.data ?? {},
@@ -202,7 +202,7 @@ export class NotificationsService {
       const chunk = unique.slice(i, i + CHUNK_SIZE);
       const messages = chunk.map((to) => ({
         to,
-        sound: 'default',
+        sound: 'notification.wav',
         title: payload.title,
         body: payload.body,
         data: payload.data ?? {},

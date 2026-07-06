@@ -491,6 +491,7 @@ export class JobsService {
           name: dto.customerName,
           initials: initialsOf(dto.customerName),
           color: ['a', 'b', 'c', 'd', 'e', 'f'][count % 6],
+          phone: dto.customerPhone?.trim() || undefined,
         },
       });
       return customer.id;
