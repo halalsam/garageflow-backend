@@ -47,7 +47,7 @@ export class JobsService {
   // ── Reads ────────────────────────────────────────────────────────────────
 
   async list(user: AuthUser, status?: string, mine?: string) {
-    const where: Prisma.JobWhereInput = {};
+    const where: Prisma.JobWhereInput = { workshopId: user.workshopId };
     if (status) {
       const mapped = apiToJobStatus[status] ?? apiToJobStatus[status.toUpperCase()];
       if (mapped) where.status = mapped;
@@ -66,9 +66,9 @@ export class JobsService {
     return jobs.map(serializeJob);
   }
 
-  async findOne(code: string) {
-    const job = await this.prisma.job.findUnique({
-      where: { code },
+  async findOne(code: string, workshopId: string) {
+    const job = await this.prisma.job.findFirst({
+      where: { code, workshopId },
       include: jobDetailInclude,
     });
     if (!job) throw new NotFoundException('Job not found');
@@ -88,8 +88,7 @@ export class JobsService {
   // Mark the chat as read by the current user up to now. Idempotent upsert of
   // the per-user/per-job read marker.
   async markRead(code: string, user: AuthUser) {
-    const job = await this.prisma.job.findUnique({ where: { code }, select: { id: true } });
-    if (!job) throw new NotFoundException('Job not found');
+    const job = await this.resolveJob(code, user.workshopId);
     await this.prisma.jobRead.upsert({
       where: { userId_jobId: { userId: user.id, jobId: job.id } },
       create: { userId: user.id, jobId: job.id },
@@ -101,10 +100,11 @@ export class JobsService {
   // Save (or replace) one mandatory completion photo for a job side.
   async saveCompletionPhoto(
     code: string,
+    user: AuthUser,
     side: string,
     file?: { originalname: string; buffer: Buffer },
   ) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     const SIDE = this.validSide(side);
     if (!file) throw new BadRequestException('Photo required');
     const url = await this.storage.save(file, `jobs/${job.id}/completion`);
@@ -113,16 +113,17 @@ export class JobsService {
       create: { jobId: job.id, side: SIDE, url },
       update: { url, at: new Date() },
     });
-    return this.findOne(code);
+    return this.findOne(code, user.workshopId);
   }
 
   // Save (or replace) one mandatory delivery walk-around photo for a job side.
   async saveDeliveryPhoto(
     code: string,
+    user: AuthUser,
     side: string,
     file?: { originalname: string; buffer: Buffer },
   ) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     const SIDE = this.validSide(side);
     if (!file) throw new BadRequestException('Photo required');
     const url = await this.storage.save(file, `jobs/${job.id}/delivery`);
@@ -131,7 +132,7 @@ export class JobsService {
       create: { jobId: job.id, side: SIDE, url },
       update: { url, at: new Date() },
     });
-    return this.findOne(code);
+    return this.findOne(code, user.workshopId);
   }
 
   private validSide(side: string): (typeof COMPLETION_SIDES)[number] {
@@ -147,7 +148,9 @@ export class JobsService {
     let customerId: string;
 
     if (dto.vehicleId) {
-      const vehicle = await this.prisma.vehicle.findUnique({ where: { id: dto.vehicleId } });
+      const vehicle = await this.prisma.vehicle.findFirst({
+        where: { id: dto.vehicleId, workshopId: user.workshopId },
+      });
       if (!vehicle) throw new NotFoundException('Vehicle not found');
       vehicleId = vehicle.id;
       customerId = dto.customerId ?? vehicle.customerId;
@@ -158,9 +161,10 @@ export class JobsService {
           errors: { plate: ['Vehicle details required'] },
         });
       }
-      customerId = await this.resolveCustomerId(dto);
+      customerId = await this.resolveCustomerId(dto, user.workshopId);
       const vehicle = await this.prisma.vehicle.create({
         data: {
+          workshopId: user.workshopId,
           customerId,
           plate: dto.plate,
           make: dto.make,
@@ -176,6 +180,7 @@ export class JobsService {
     const job = await this.prisma.job.create({
       data: {
         code,
+        workshopId: user.workshopId,
         vehicleId,
         customerId,
         complaint: dto.complaint,
@@ -191,7 +196,7 @@ export class JobsService {
         data: {
           jobId: job.id,
           submittedById: user.id,
-          gstRate: await this.estimates.defaultGstRate(),
+          gstRate: await this.estimates.defaultGstRate(user.workshopId),
           lines: {
             create: dto.lines.map((l) => ({
               label: l.label,
@@ -204,18 +209,20 @@ export class JobsService {
       await this.prisma.job.update({ where: { id: job.id }, data: { status: 'REVIEW' } });
     }
 
-    return this.findOne(code);
+    return this.findOne(code, user.workshopId);
   }
 
   // ── Update (PATCH returns { message } by contract) ────────────────────────
 
   async update(code: string, dto: UpdateJobDto, user: AuthUser) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     if (dto.techId !== undefined && user.role === UserRole.TECH) {
       throw new ForbiddenException('Technicians cannot reassign jobs');
     }
     if (dto.techId) {
-      const tech = await this.prisma.user.findUnique({ where: { id: dto.techId } });
+      const tech = await this.prisma.user.findFirst({
+        where: { id: dto.techId, workshopId: user.workshopId },
+      });
       if (!tech) throw new NotFoundException('Technician not found');
     }
     // Arrival photos are captured when the job card is created, so completion
@@ -315,6 +322,7 @@ export class JobsService {
     if (!job) return;
     await this.notifications.pushToRoles(
       [UserRole.MANAGER, UserRole.ADMIN],
+      job.workshopId,
       {
         title: 'Job completed',
         body: `${job.vehicle.plate} is ready for delivery`,
@@ -332,6 +340,7 @@ export class JobsService {
     if (!job) return;
     await this.notifications.pushToRoles(
       [UserRole.MANAGER, UserRole.ADMIN],
+      job.workshopId,
       {
         title: 'Vehicle delivered',
         body: `${job.vehicle.plate} was delivered to the customer`,
@@ -345,7 +354,7 @@ export class JobsService {
 
   // Paginated, newest-first events for a job. TECHs are scoped to their own jobs.
   async listEvents(code: string, user: AuthUser, dto: ListEventsDto) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     assertJobAccess(job, user);
     return this.events.listEvents(job.id, { cursor: dto.cursor, limit: dto.limit });
   }
@@ -357,7 +366,7 @@ export class JobsService {
   //   • APPROVAL requires manager/admin.
   //   • COMMENT / PHOTO are allowed for any job participant.
   async createEvent(code: string, user: AuthUser, dto: CreateEventDto) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     assertJobAccess(job, user);
 
     const serverOnly: JobEventType[] = [
@@ -400,7 +409,7 @@ export class JobsService {
   // A presigned upload for this job's photos: the client PUTs the file straight
   // to storage, then POSTs a PHOTO event carrying the returned fileUrl.
   async presignUpload(code: string, user: AuthUser, contentType?: string) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     assertJobAccess(job, user);
     if (!contentType) throw new BadRequestException('contentType is required');
     return this.storage.createPresignedUpload(contentType, `jobs/${job.id}`);
@@ -439,13 +448,18 @@ export class JobsService {
       await this.notifications.pushToUsers([job.techId], payload);
     }
     // Managers + admins watching the floor (minus the author).
-    await this.notifications.pushToRoles([UserRole.MANAGER, UserRole.ADMIN], payload, authorId);
+    await this.notifications.pushToRoles(
+      [UserRole.MANAGER, UserRole.ADMIN],
+      job.workshopId,
+      payload,
+      authorId,
+    );
   }
 
   // ── Parts (PART_ADDED events + stock decrement) ───────────────────────────
 
   async addParts(code: string, items: PartLineDto[], user: AuthUser) {
-    const job = await this.resolveJob(code);
+    const job = await this.resolveJob(code, user.workshopId);
     assertJobAccess(job, user);
     const created: Awaited<ReturnType<JobEventsService['emit']>>[] = [];
     for (const item of items) {
@@ -472,22 +486,25 @@ export class JobsService {
 
   // ── Internals ─────────────────────────────────────────────────────────────
 
-  private async resolveJob(code: string) {
-    const job = await this.prisma.job.findUnique({ where: { code } });
+  private async resolveJob(code: string, workshopId: string) {
+    const job = await this.prisma.job.findFirst({ where: { code, workshopId } });
     if (!job) throw new NotFoundException('Job not found');
     return job;
   }
 
-  private async resolveCustomerId(dto: CreateJobDto): Promise<string> {
+  private async resolveCustomerId(dto: CreateJobDto, workshopId: string): Promise<string> {
     if (dto.customerId) {
-      const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: dto.customerId, workshopId },
+      });
       if (!customer) throw new NotFoundException('Customer not found');
       return customer.id;
     }
     if (dto.customerName) {
-      const count = await this.prisma.customer.count();
+      const count = await this.prisma.customer.count({ where: { workshopId } });
       const customer = await this.prisma.customer.create({
         data: {
+          workshopId,
           name: dto.customerName,
           initials: initialsOf(dto.customerName),
           color: ['a', 'b', 'c', 'd', 'e', 'f'][count % 6],

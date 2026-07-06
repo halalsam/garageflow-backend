@@ -12,7 +12,9 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { WorkshopsService } from './workshops.service';
+import { AuthService } from '../auth/auth.service';
 import { Roles } from '../common/decorators/roles.decorator';
+import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateWorkshopDto } from './dto/create-workshop.dto';
 import { UpdateWorkshopDto } from './dto/update-workshop.dto';
 
@@ -20,37 +22,44 @@ import { UpdateWorkshopDto } from './dto/update-workshop.dto';
 @ApiBearerAuth('access-token')
 @Controller()
 export class WorkshopsController {
-  constructor(private readonly workshops: WorkshopsService) {}
+  constructor(
+    private readonly workshops: WorkshopsService,
+    private readonly auth: AuthService,
+  ) {}
 
-  // The active workshop — readable by every role (headers, receipts, GST rate).
+  // The workshop the caller's session is currently scoped to — readable by
+  // every role (headers, receipts, GST rate).
   @Get('workshop')
-  active() {
-    return this.workshops.getActive();
+  active(@CurrentUser('workshopId') workshopId: string) {
+    return this.workshops.getActive(workshopId);
   }
 
   // Managing workshops is ADMIN-only.
   @Get('workshops')
   @Roles(UserRole.ADMIN)
-  list() {
-    return this.workshops.list();
+  list(@CurrentUser() user: AuthUser) {
+    return this.workshops.list(user.id, user.workshopId);
   }
 
   @Post('workshops')
   @Roles(UserRole.ADMIN)
-  create(@Body() dto: CreateWorkshopDto) {
-    return this.workshops.create(dto);
+  create(@Body() dto: CreateWorkshopDto, @CurrentUser() user: AuthUser) {
+    return this.workshops.create(dto, user.id);
   }
 
   @Patch('workshops/:id')
   @Roles(UserRole.ADMIN)
-  update(@Param('id') id: string, @Body() dto: UpdateWorkshopDto) {
-    return this.workshops.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateWorkshopDto, @CurrentUser() user: AuthUser) {
+    return this.workshops.update(id, dto, user.id);
   }
 
-  @Post('workshops/:id/activate')
+  // Switch the caller's whole session into another workshop they have access
+  // to. Mints a fresh token pair scoped to it — the frontend swaps its stored
+  // tokens and every subsequent request is re-scoped from there.
+  @Post('workshops/:id/switch')
   @Roles(UserRole.ADMIN)
-  activate(@Param('id') id: string) {
-    return this.workshops.activate(id);
+  switch(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.auth.switchWorkshop(user.id, id);
   }
 
   // Upload (or replace) the workshop logo (multipart `image`).
@@ -59,8 +68,9 @@ export class WorkshopsController {
   @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
   uploadLogo(
     @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
     @UploadedFiles() files: { image?: Array<{ originalname: string; buffer: Buffer }> },
   ) {
-    return this.workshops.saveLogo(id, files?.image?.[0]);
+    return this.workshops.saveLogo(id, user.id, files?.image?.[0]);
   }
 }

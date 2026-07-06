@@ -15,14 +15,14 @@ import { dayRange, monthRange, weekRange } from './period.util';
 export class FinanceService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private invoicesWith() {
-    return this.prisma.invoice.findMany({ include: invoiceInclude });
+  private invoicesWith(workshopId: string) {
+    return this.prisma.invoice.findMany({ where: { workshopId }, include: invoiceInclude });
   }
 
   // ── Summary (outstanding / collected today / revenue this week) ───────────
-  async summary(day?: string, _month?: string) {
+  async summary(workshopId: string, day?: string, _month?: string) {
     const now = new Date();
-    const invoices = await this.invoicesWith();
+    const invoices = await this.invoicesWith(workshopId);
 
     let outstanding = 0;
     for (const inv of invoices) {
@@ -34,7 +34,7 @@ export class FinanceService {
 
     const { start: dStart, end: dEnd } = dayRange(day, now);
     const payments = await this.prisma.payment.findMany({
-      where: { at: { gte: dStart, lt: dEnd } },
+      where: { at: { gte: dStart, lt: dEnd }, invoice: { workshopId } },
     });
     const collectedToday = toRupees(payments.reduce((s, p) => s + p.amountPaise, 0));
 
@@ -48,8 +48,8 @@ export class FinanceService {
   }
 
   // ── Receivables (balance > 0, biggest first) ──────────────────────────────
-  async receivables() {
-    const invoices = await this.invoicesWith();
+  async receivables(workshopId: string) {
+    const invoices = await this.invoicesWith(workshopId);
     return invoices
       .map(serializeInvoice)
       .filter((i) => i.balance > 0)
@@ -57,10 +57,10 @@ export class FinanceService {
   }
 
   // ── Day book (collections by method) ──────────────────────────────────────
-  async collections(day?: string) {
+  async collections(workshopId: string, day?: string) {
     const { start, end } = dayRange(day);
     const payments = await this.prisma.payment.findMany({
-      where: { at: { gte: start, lt: end } },
+      where: { at: { gte: start, lt: end }, invoice: { workshopId } },
     });
     const methods = (['CASH', 'UPI', 'CARD'] as PaymentMethod[]).map((m) => {
       const ps = payments.filter((p) => p.method === m);
@@ -78,10 +78,10 @@ export class FinanceService {
   }
 
   // ── GST output-tax (CGST + SGST split) ────────────────────────────────────
-  async gst(month?: string) {
+  async gst(workshopId: string, month?: string) {
     const { start, end } = monthRange(month);
     const invoices = await this.prisma.invoice.findMany({
-      where: { issuedAt: { gte: start, lt: end } },
+      where: { workshopId, issuedAt: { gte: start, lt: end } },
       include: invoiceInclude,
     });
     let taxable = 0;
@@ -96,11 +96,11 @@ export class FinanceService {
   }
 
   // ── Profit (ex-GST revenue − expenses) ────────────────────────────────────
-  async profit(month?: string) {
+  async profit(workshopId: string, month?: string) {
     const { start, end } = monthRange(month);
     const [invoices, expenses] = await Promise.all([
       this.prisma.invoice.findMany({
-        where: { issuedAt: { gte: start, lt: end } },
+        where: { workshopId, issuedAt: { gte: start, lt: end } },
         include: invoiceInclude,
       }),
       this.prisma.expense.findMany({ where: { spentAt: { gte: start, lt: end } } }),
@@ -111,8 +111,9 @@ export class FinanceService {
   }
 
   // ── Party ledgers ─────────────────────────────────────────────────────────
-  async ledgers() {
+  async ledgers(workshopId: string) {
     const customers = await this.prisma.customer.findMany({
+      where: { workshopId },
       include: { invoices: { include: invoiceInclude } },
     });
     return customers
@@ -129,9 +130,9 @@ export class FinanceService {
       .sort((a, b) => b.closing - a.closing);
   }
 
-  async ledger(customerId: string) {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
+  async ledger(customerId: string, workshopId: string) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, workshopId },
       include: { invoices: { include: invoiceInclude } },
     });
     if (!customer) throw new NotFoundException('Customer not found');

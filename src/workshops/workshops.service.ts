@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
@@ -13,52 +13,54 @@ export class WorkshopsService {
     private readonly storage: StorageService,
   ) {}
 
-  // The workshop the app operates as. Falls back to the first row for
-  // databases seeded before the `active` flag existed.
-  async activeRow() {
-    const active = await this.prisma.workshop.findFirst({ where: { active: true } });
-    if (active) return active;
-    const first = await this.prisma.workshop.findFirst({ orderBy: { createdAt: 'asc' } });
-    if (!first) throw new NotFoundException('No workshop configured');
-    return first;
+  // A raw workshop row by id — used internally by callers (estimates' GST
+  // rate/invoice prefix) that need one workshop's settings, not a list.
+  async getById(id: string) {
+    const workshop = await this.prisma.workshop.findUnique({ where: { id } });
+    if (!workshop) throw new NotFoundException('Workshop not found');
+    return workshop;
   }
 
-  async getActive() {
-    return serializeWorkshop(await this.activeRow());
+  // The workshop the caller's current session is scoped to (from their JWT).
+  async getActive(workshopId: string) {
+    return serializeWorkshop(await this.getById(workshopId), true);
   }
 
-  async list() {
-    const rows = await this.prisma.workshop.findMany({ orderBy: { createdAt: 'asc' } });
-    // Mark the effective active row even when none is flagged yet.
-    const activeId = rows.find((w) => w.active)?.id ?? rows[0]?.id;
-    return rows.map((w) => serializeWorkshop(w, w.id === activeId));
+  // Workshops this admin can switch into: their home + any WorkshopAccess
+  // grants. `currentWorkshopId` (their session's) is flagged as the active row.
+  async list(userId: string, currentWorkshopId: string) {
+    const rows = await this.prisma.workshop.findMany({
+      where: { OR: [{ users: { some: { id: userId } } }, { access: { some: { userId } } }] },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((w) => serializeWorkshop(w, w.id === currentWorkshopId));
   }
 
-  async create(dto: CreateWorkshopDto) {
-    const count = await this.prisma.workshop.count();
-    const makeActive = dto.active || count === 0;
+  // Creates a workshop and immediately grants the creating admin access to it
+  // (they can't switch into it otherwise).
+  async create(dto: CreateWorkshopDto, creatorUserId: string) {
     const workshop = await this.prisma.$transaction(async (tx) => {
-      if (makeActive) {
-        await tx.workshop.updateMany({ data: { active: false } });
-      }
-      return tx.workshop.create({
+      const created = await tx.workshop.create({
         data: {
           name: dto.name,
           gstin: dto.gstin,
           address: dto.address,
           phone: dto.phone,
-          active: makeActive,
           ...(dto.gstRate !== undefined ? { gstRate: dto.gstRate } : {}),
           ...(dto.invoicePrefix ? { invoicePrefix: dto.invoicePrefix } : {}),
           ...(dto.invoiceFooter !== undefined ? { invoiceFooter: dto.invoiceFooter } : {}),
         },
       });
+      await tx.workshopAccess.create({
+        data: { userId: creatorUserId, workshopId: created.id },
+      });
+      return created;
     });
     return serializeWorkshop(workshop);
   }
 
-  async update(id: string, dto: UpdateWorkshopDto) {
-    await this.ensureExists(id);
+  async update(id: string, dto: UpdateWorkshopDto, requestingUserId: string) {
+    await this.ensureAccess(id, requestingUserId);
     const data: Prisma.WorkshopUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.gstin !== undefined ? { gstin: dto.gstin || null } : {}),
@@ -72,29 +74,30 @@ export class WorkshopsService {
     return serializeWorkshop(workshop);
   }
 
-  // Switch the app to another workshop: exactly one active row.
-  async activate(id: string) {
-    await this.ensureExists(id);
-    const workshop = await this.prisma.$transaction(async (tx) => {
-      await tx.workshop.updateMany({ data: { active: false } });
-      return tx.workshop.update({ where: { id }, data: { active: true } });
-    });
-    return serializeWorkshop(workshop);
-  }
-
   // Save (or replace) the workshop's logo (multipart `image`). Shown in app
   // headers and printed on the invoice PDF.
-  async saveLogo(id: string, file?: { originalname: string; buffer: Buffer }) {
-    await this.ensureExists(id);
+  async saveLogo(
+    id: string,
+    requestingUserId: string,
+    file?: { originalname: string; buffer: Buffer },
+  ) {
+    await this.ensureAccess(id, requestingUserId);
     if (!file) throw new BadRequestException('Logo image required');
     const url = await this.storage.save(file, `workshops/${id}`);
     const workshop = await this.prisma.workshop.update({ where: { id }, data: { logoUrl: url } });
     return serializeWorkshop(workshop);
   }
 
-  private async ensureExists(id: string) {
-    const workshop = await this.prisma.workshop.findUnique({ where: { id } });
+  // An admin may only manage workshops they belong to or hold an access grant
+  // for — being ADMIN elsewhere doesn't give blanket rights over every tenant.
+  private async ensureAccess(workshopId: string, userId: string) {
+    const workshop = await this.prisma.workshop.findUnique({ where: { id: workshopId } });
     if (!workshop) throw new NotFoundException('Workshop not found');
-    return workshop;
+    const hasAccess =
+      workshop.id === (await this.prisma.user.findUnique({ where: { id: userId } }))?.workshopId ||
+      (await this.prisma.workshopAccess.findUnique({
+        where: { userId_workshopId: { userId, workshopId } },
+      })) !== null;
+    if (!hasAccess) throw new ForbiddenException('You do not have access to this workshop');
   }
 }

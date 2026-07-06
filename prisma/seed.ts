@@ -35,51 +35,52 @@ async function main() {
   await clear();
   const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
 
-  await prisma.workshop.create({
-    data: { name: 'Main Street Motors', gstin: '27ABCDE1234F1Z5', active: true },
+  const workshop = await prisma.workshop.create({
+    data: { name: 'Main Street Motors', gstin: '27ABCDE1234F1Z5' },
   });
+  const workshopId = workshop.id;
 
   // ── Team (Users) ───────────────────────────────────────────────────────────
   const kamal = await prisma.user.create({
-    data: { name: 'Kamal Khushwaha', email: 'admin@garageflow.test', passwordHash, role: 'ADMIN', phone: '+91 98200 11223', initials: 'VK', color: 'f', active: true },
+    data: { workshopId, name: 'Kamal Khushwaha', email: 'admin@garageflow.test', passwordHash, role: 'ADMIN', phone: '+91 98200 11223', initials: 'VK', color: 'f', active: true },
   });
   const rashid = await prisma.user.create({
-    data: { name: 'Rashid Pathan', email: 'manager@garageflow.test', passwordHash, role: 'MANAGER', phone: '+91 98201 44556', initials: 'RP', color: 'b', active: true },
+    data: { workshopId, name: 'Rashid Pathan', email: 'manager@garageflow.test', passwordHash, role: 'MANAGER', phone: '+91 98201 44556', initials: 'RP', color: 'b', active: true },
   });
   const arjun = await prisma.user.create({
-    data: { name: 'Arjun Patel', email: 'arjun@garageflow.test', passwordHash, role: 'TECH', initials: 'AP', color: 'a', active: true },
+    data: { workshopId, name: 'Arjun Patel', email: 'arjun@garageflow.test', passwordHash, role: 'TECH', initials: 'AP', color: 'a', active: true },
   });
   const suresh = await prisma.user.create({
-    data: { name: 'Suresh Verma', email: 'suresh@garageflow.test', passwordHash, role: 'TECH', initials: 'SV', color: 'd', active: true },
+    data: { workshopId, name: 'Suresh Verma', email: 'suresh@garageflow.test', passwordHash, role: 'TECH', initials: 'SV', color: 'd', active: true },
   });
   await prisma.user.create({
-    data: { name: 'Ramesh Nair', email: 'ramesh@garageflow.test', passwordHash, role: 'TECH', initials: 'Rn', color: 'e', active: false },
+    data: { workshopId, name: 'Ramesh Nair', email: 'ramesh@garageflow.test', passwordHash, role: 'TECH', initials: 'Rn', color: 'e', active: false },
   });
 
   // ── Customers ──────────────────────────────────────────────────────────────
-  const rakesh = await prisma.customer.create({ data: { name: 'Rakesh Kumar', initials: 'RK', color: 'c', phone: '+91 99300 10101' } });
-  const sneha = await prisma.customer.create({ data: { name: 'Sneha Desai', initials: 'SD', color: 'b', phone: '+91 99300 20202' } });
-  const imran = await prisma.customer.create({ data: { name: 'Imran Shaikh', initials: 'IS', color: 'e', phone: '+91 99300 30303' } });
+  const rakesh = await prisma.customer.create({ data: { workshopId, name: 'Rakesh Kumar', initials: 'RK', color: 'c', phone: '+91 99300 10101' } });
+  const sneha = await prisma.customer.create({ data: { workshopId, name: 'Sneha Desai', initials: 'SD', color: 'b', phone: '+91 99300 20202' } });
+  const imran = await prisma.customer.create({ data: { workshopId, name: 'Imran Shaikh', initials: 'IS', color: 'e', phone: '+91 99300 30303' } });
 
   // ── Vehicles ───────────────────────────────────────────────────────────────
-  const swift = await prisma.vehicle.create({ data: { customerId: rakesh.id, plate: 'MH 02 AB 1234', make: 'Maruti', model: 'Swift', year: 2021, type: 'HATCHBACK' } });
-  const creta = await prisma.vehicle.create({ data: { customerId: sneha.id, plate: 'GJ 01 KK 0921', make: 'Hyundai', model: 'Creta', year: 2022, type: 'SUV' } });
-  const nexon = await prisma.vehicle.create({ data: { customerId: rakesh.id, plate: 'DL 3C AT 7788', make: 'Tata', model: 'Nexon', year: 2020, type: 'SUV' } });
-  const city = await prisma.vehicle.create({ data: { customerId: rakesh.id, plate: 'KA 05 MN 4521', make: 'Honda', model: 'City', year: 2019, type: 'SEDAN' } });
-  const imranSwift = await prisma.vehicle.create({ data: { customerId: imran.id, plate: 'MH 12 DE 8890', make: 'Maruti', model: 'Swift', year: 2018, type: 'HATCHBACK' } });
+  const swift = await prisma.vehicle.create({ data: { workshopId, customerId: rakesh.id, plate: 'MH 02 AB 1234', make: 'Maruti', model: 'Swift', year: 2021, type: 'HATCHBACK' } });
+  const creta = await prisma.vehicle.create({ data: { workshopId, customerId: sneha.id, plate: 'GJ 01 KK 0921', make: 'Hyundai', model: 'Creta', year: 2022, type: 'SUV' } });
+  const nexon = await prisma.vehicle.create({ data: { workshopId, customerId: rakesh.id, plate: 'DL 3C AT 7788', make: 'Tata', model: 'Nexon', year: 2020, type: 'SUV' } });
+  const city = await prisma.vehicle.create({ data: { workshopId, customerId: rakesh.id, plate: 'KA 05 MN 4521', make: 'Honda', model: 'City', year: 2019, type: 'SEDAN' } });
+  const imranSwift = await prisma.vehicle.create({ data: { workshopId, customerId: imran.id, plate: 'MH 12 DE 8890', make: 'Maruti', model: 'Swift', year: 2018, type: 'HATCHBACK' } });
 
   // ── Jobs ───────────────────────────────────────────────────────────────────
   const j1 = await prisma.job.create({
-    data: { code: 'j1', vehicleId: swift.id, customerId: rakesh.id, techId: arjun.id, status: 'IN_PROGRESS', bay: 'BAY 2', priority: 'HIGH', complaint: 'AC not cooling, strange noise from blower', progress: 65 },
+    data: { workshopId, code: 'j1', vehicleId: swift.id, customerId: rakesh.id, techId: arjun.id, status: 'IN_PROGRESS', bay: 'BAY 2', priority: 'HIGH', complaint: 'AC not cooling, strange noise from blower', progress: 65 },
   });
   const j2 = await prisma.job.create({
-    data: { code: 'j2', vehicleId: creta.id, customerId: sneha.id, techId: suresh.id, status: 'AWAITING_PART', bay: 'BAY 4', priority: 'NORMAL', complaint: 'Periodic service + AC gas top-up', progress: 40 },
+    data: { workshopId, code: 'j2', vehicleId: creta.id, customerId: sneha.id, techId: suresh.id, status: 'AWAITING_PART', bay: 'BAY 4', priority: 'NORMAL', complaint: 'Periodic service + AC gas top-up', progress: 40 },
   });
   const j3 = await prisma.job.create({
-    data: { code: 'j3', vehicleId: nexon.id, customerId: rakesh.id, status: 'REVIEW', priority: 'NORMAL', complaint: 'Brakes squealing, soft pedal', progress: 0 },
+    data: { workshopId, code: 'j3', vehicleId: nexon.id, customerId: rakesh.id, status: 'REVIEW', priority: 'NORMAL', complaint: 'Brakes squealing, soft pedal', progress: 0 },
   });
   const j4 = await prisma.job.create({
-    data: { code: 'j4', vehicleId: city.id, customerId: rakesh.id, techId: arjun.id, status: 'COMPLETED', priority: 'NORMAL', progress: 100 },
+    data: { workshopId, code: 'j4', vehicleId: city.id, customerId: rakesh.id, techId: arjun.id, status: 'COMPLETED', priority: 'NORMAL', progress: 100 },
   });
 
   // ── Estimates / Approvals (PENDING) ────────────────────────────────────────
@@ -147,7 +148,7 @@ async function main() {
   // ── Invoices ───────────────────────────────────────────────────────────────
   const inv2048 = await prisma.invoice.create({
     data: {
-      number: 'INV-2048', jobId: j4.id, customerId: rakesh.id, vehicleId: city.id, gstRate: 18, issuedAt: utc('2026-06-26T00:00:00'),
+      workshopId, number: 'INV-2048', jobId: j4.id, customerId: rakesh.id, vehicleId: city.id, gstRate: 18, issuedAt: utc('2026-06-26T00:00:00'),
       lines: { create: [
         { label: 'Brake pad replacement', note: 'Labour', amountPaise: rupees(1800) },
         { label: 'Front brake pads', note: '2 × ₹2,400', amountPaise: rupees(4800) },
@@ -158,7 +159,7 @@ async function main() {
   });
   const inv2049 = await prisma.invoice.create({
     data: {
-      number: 'INV-2049', customerId: sneha.id, vehicleId: creta.id, gstRate: 18, issuedAt: utc('2026-06-27T00:00:00'),
+      workshopId, number: 'INV-2049', customerId: sneha.id, vehicleId: creta.id, gstRate: 18, issuedAt: utc('2026-06-27T00:00:00'),
       lines: { create: [
         { label: 'AC service & gas top-up', note: 'Labour', amountPaise: rupees(1500) },
         { label: 'Cabin air filter', note: '1 × ₹650', amountPaise: rupees(650) },
@@ -168,7 +169,7 @@ async function main() {
   });
   await prisma.invoice.create({
     data: {
-      number: 'INV-2050', customerId: imran.id, vehicleId: imranSwift.id, gstRate: 18, issuedAt: utc('2026-06-23T00:00:00'),
+      workshopId, number: 'INV-2050', customerId: imran.id, vehicleId: imranSwift.id, gstRate: 18, issuedAt: utc('2026-06-23T00:00:00'),
       lines: { create: [
         { label: 'Periodic service (full)', note: 'Labour', amountPaise: rupees(3200) },
         { label: 'Engine oil 5W-30', note: '4 × ₹520', amountPaise: rupees(2080) },
@@ -179,7 +180,7 @@ async function main() {
   });
   const inv2051 = await prisma.invoice.create({
     data: {
-      number: 'INV-2051', customerId: rakesh.id, vehicleId: nexon.id, gstRate: 18, issuedAt: utc('2026-06-27T00:00:00'),
+      workshopId, number: 'INV-2051', customerId: rakesh.id, vehicleId: nexon.id, gstRate: 18, issuedAt: utc('2026-06-27T00:00:00'),
       lines: { create: [
         { label: 'Brake pad replacement', note: 'Labour', amountPaise: rupees(1800) },
         { label: 'Front brake pads', note: '2 × ₹2,400', amountPaise: rupees(4800) },
@@ -206,6 +207,15 @@ async function main() {
       { title: 'Electricity bill', category: 'UTILITIES', amountPaise: rupees(4200), spentAt: utc('2026-06-15T00:00:00'), createdById: rashid.id },
       { title: 'Shop supplies & consumables', category: 'MISC', amountPaise: rupees(2400), spentAt: utc('2026-06-22T00:00:00'), createdById: rashid.id },
     ],
+  });
+
+  // A second workshop the admin can switch into (empty tenant, demonstrates
+  // the workshop switcher without mixing data into the seeded jobs above).
+  const secondWorkshop = await prisma.workshop.create({
+    data: { name: 'Highway Auto Care', invoicePrefix: 'HWY' },
+  });
+  await prisma.workshopAccess.create({
+    data: { userId: kamal.id, workshopId: secondWorkshop.id },
   });
 
   console.log('Seed complete. Dev login password for all users:', DEV_PASSWORD);

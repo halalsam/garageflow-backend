@@ -17,8 +17,8 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @Get()
-  list() {
-    return this.users.list();
+  list(@CurrentUser('workshopId') workshopId: string) {
+    return this.users.list(workshopId);
   }
 
   @Post()
@@ -26,12 +26,16 @@ export class UsersController {
     if (user.role === UserRole.MANAGER && dto.role !== 'tech') {
       throw new ForbiddenException('Managers can only add technicians');
     }
-    return this.users.create(dto);
+    return this.users.create(dto, user.workshopId);
   }
 
   @Patch(':id')
   @Roles(UserRole.ADMIN)
-  update(@Param('id') id: string, @Body() dto: UpdateTeamMemberDto) {
-    return this.users.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTeamMemberDto,
+    @CurrentUser('workshopId') workshopId: string,
+  ) {
+    return this.users.update(id, dto, workshopId);
   }
 }

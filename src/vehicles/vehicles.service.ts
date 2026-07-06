@@ -17,20 +17,23 @@ export class VehiclesService {
   // `q` is the global search — it matches the plate, the customer's name, or
   // the make/model, across every vehicle regardless of job status. Each hit
   // carries its owner and its most recent job so results can deep-link.
-  async search(plate?: string, q?: string) {
+  async search(workshopId: string, plate?: string, q?: string) {
     const term = (q ?? '').trim();
-    const where: Prisma.VehicleWhereInput = term
-      ? {
-          OR: [
-            { plate: { contains: term, mode: 'insensitive' } },
-            { make: { contains: term, mode: 'insensitive' } },
-            { model: { contains: term, mode: 'insensitive' } },
-            { customer: { name: { contains: term, mode: 'insensitive' } } },
-          ],
-        }
-      : plate
-        ? { plate: { contains: plate, mode: 'insensitive' } }
-        : {};
+    const where: Prisma.VehicleWhereInput = {
+      workshopId,
+      ...(term
+        ? {
+            OR: [
+              { plate: { contains: term, mode: 'insensitive' } },
+              { make: { contains: term, mode: 'insensitive' } },
+              { model: { contains: term, mode: 'insensitive' } },
+              { customer: { name: { contains: term, mode: 'insensitive' } } },
+            ],
+          }
+        : plate
+          ? { plate: { contains: plate, mode: 'insensitive' } }
+          : {}),
+    };
     const vehicles = await this.prisma.vehicle.findMany({
       where,
       include: {
@@ -50,20 +53,23 @@ export class VehiclesService {
     });
   }
 
-  async findOne(id: string) {
-    const vehicle = await this.prisma.vehicle.findUnique({
-      where: { id },
+  async findOne(id: string, workshopId: string) {
+    const vehicle = await this.prisma.vehicle.findFirst({
+      where: { id, workshopId },
       include: { customer: true },
     });
     if (!vehicle) throw new NotFoundException('Vehicle not found');
     return { ...serializeVehicle(vehicle), customer: serializePerson(vehicle.customer) };
   }
 
-  async create(dto: CreateVehicleDto) {
-    const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
+  async create(dto: CreateVehicleDto, workshopId: string) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: dto.customerId, workshopId },
+    });
     if (!customer) throw new NotFoundException('Customer not found');
     const vehicle = await this.prisma.vehicle.create({
       data: {
+        workshopId,
         customerId: dto.customerId,
         plate: dto.plate,
         make: dto.make,
@@ -78,8 +84,12 @@ export class VehiclesService {
 
   // Save (or replace) the vehicle's photo. Used by the new-job flow after the
   // vehicle exists (presign needs a jobId, so it can't run before create).
-  async savePhoto(id: string, file?: { originalname: string; buffer: Buffer }) {
-    const vehicle = await this.prisma.vehicle.findUnique({ where: { id } });
+  async savePhoto(
+    id: string,
+    workshopId: string,
+    file?: { originalname: string; buffer: Buffer },
+  ) {
+    const vehicle = await this.prisma.vehicle.findFirst({ where: { id, workshopId } });
     if (!vehicle) throw new NotFoundException('Vehicle not found');
     if (!file) throw new BadRequestException('Photo required');
     const url = await this.storage.save(file, `vehicles/${id}`);

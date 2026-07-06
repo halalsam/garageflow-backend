@@ -146,17 +146,18 @@ export class NotificationsService {
   }
 
   /**
-   * Push to every active user holding one of `roles`, optionally excluding the
-   * actor who triggered the event (so a manager submitting doesn't ping
-   * themselves).
+   * Push to every active user of `workshopId` holding one of `roles`,
+   * optionally excluding the actor who triggered the event (so a manager
+   * submitting doesn't ping themselves).
    */
   async pushToRoles(
     roles: UserRole[],
+    workshopId: string,
     payload: PushPayload,
     excludeUserId?: string,
   ): Promise<void> {
     const users = await this.prisma.user.findMany({
-      where: { role: { in: roles }, active: true, id: { not: excludeUserId } },
+      where: { role: { in: roles }, workshopId, active: true, id: { not: excludeUserId } },
       select: { id: true },
     });
     await this.pushToUsers(

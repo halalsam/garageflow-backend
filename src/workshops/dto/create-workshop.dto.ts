@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class CreateWorkshopDto {
   @IsString()
@@ -16,11 +16,6 @@ export class CreateWorkshopDto {
   @IsOptional()
   @IsString()
   phone?: string;
-
-  // Create-and-switch in one step when true.
-  @IsOptional()
-  @IsBoolean()
-  active?: boolean;
 
   @IsOptional()
   @IsInt()

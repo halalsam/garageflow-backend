@@ -10,4 +10,5 @@ export type AccessTokenPayload = {
   sub: string;
   email: string;
   role: UserRole;
+  workshopId: string;
 };

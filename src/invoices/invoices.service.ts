@@ -21,8 +21,9 @@ export class InvoicesService {
     private readonly events: JobEventsService,
   ) {}
 
-  async list(status?: string) {
+  async list(workshopId: string, status?: string) {
     const invoices = await this.prisma.invoice.findMany({
+      where: { workshopId },
       include: invoiceInclude,
       orderBy: { issuedAt: 'desc' },
     });
@@ -36,9 +37,9 @@ export class InvoicesService {
 
   // Looks up by invoice UUID, falling back to the job code ("j12") so links
   // built from a job screen resolve that job's invoice directly.
-  async findOne(id: string) {
+  async findOne(id: string, workshopId: string) {
     const invoice = await this.prisma.invoice.findFirst({
-      where: { OR: [{ id }, { job: { code: id } }] },
+      where: { workshopId, OR: [{ id }, { job: { code: id } }] },
       include: invoiceInclude,
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
@@ -46,7 +47,9 @@ export class InvoicesService {
   }
 
   async addPayment(invoiceId: string, dto: RecordPaymentDto, user: AuthUser) {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, workshopId: user.workshopId },
+    });
     if (!invoice) throw new NotFoundException('Invoice not found');
     const payment = await this.prisma.payment.create({
       data: {

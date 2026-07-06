@@ -51,7 +51,13 @@ export class JobEventsGateway implements OnGatewayInit, OnGatewayConnection {
       const payload = this.jwt.verify<AccessTokenPayload>(token, {
         secret: ACCESS_TOKEN_SECRET,
       });
-      const user: AuthUser = { id: payload.sub, email: payload.email, role: payload.role };
+      if (!payload.workshopId) throw new Error('Token predates workshop scoping');
+      const user: AuthUser = {
+        id: payload.sub,
+        email: payload.email,
+        role: payload.role,
+        workshopId: payload.workshopId,
+      };
       socket.data.user = user;
     } catch {
       socket.disconnect(true);
@@ -64,7 +70,7 @@ export class JobEventsGateway implements OnGatewayInit, OnGatewayConnection {
     if (!user) return { ok: false, error: 'unauthenticated' };
     const job = await this.prisma.job.findUnique({
       where: { code },
-      select: { id: true, techId: true },
+      select: { id: true, techId: true, workshopId: true },
     });
     if (!job) return { ok: false, error: 'not_found' };
     try {

@@ -1,12 +1,14 @@
 import {
+  ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { serializeUser } from '../common/serializers';
+import { serializeUser, serializeWorkshop } from '../common/serializers';
 import { AccessTokenPayload } from './jwt.strategy';
 import { LoginDto } from './dto/login.dto';
 
@@ -31,7 +33,7 @@ export class AuthService {
     if (!ok) {
       throw new UnauthorizedException('Invalid email or password');
     }
-    const tokens = await this.issueTokens(user);
+    const tokens = await this.issueTokens(user, user.workshopId);
     await this.storeRefreshHash(user.id, tokens.refreshToken);
     return { user: serializeUser(user), tokens };
   }
@@ -69,9 +71,43 @@ export class AuthService {
     if (!matches) {
       throw new UnauthorizedException('Invalid refresh token');
     }
-    const tokens = await this.issueTokens(user);
+    // Preserve whichever workshop the session was switched into — refreshing
+    // must not silently bounce the user back to their home workshop. If access
+    // to it was revoked since, fall back home rather than fail the refresh.
+    const workshopId =
+      payload.workshopId && (await this.hasWorkshopAccess(user, payload.workshopId))
+        ? payload.workshopId
+        : user.workshopId;
+    const tokens = await this.issueTokens(user, workshopId);
     await this.storeRefreshHash(user.id, tokens.refreshToken);
     return { tokens };
+  }
+
+  /**
+   * Switch the caller's session into another workshop they have access to
+   * (their home workshop, or one granted via WorkshopAccess). Mints a fresh
+   * token pair scoped to it — every subsequent request is re-scoped from the
+   * next call onward.
+   */
+  async switchWorkshop(userId: string, workshopId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+    const workshop = await this.prisma.workshop.findUnique({ where: { id: workshopId } });
+    if (!workshop) throw new NotFoundException('Workshop not found');
+    if (!(await this.hasWorkshopAccess(user, workshopId))) {
+      throw new ForbiddenException('You do not have access to this workshop');
+    }
+    const tokens = await this.issueTokens(user, workshopId);
+    await this.storeRefreshHash(user.id, tokens.refreshToken);
+    return { workshop: serializeWorkshop(workshop, true), tokens };
+  }
+
+  private async hasWorkshopAccess(user: User, workshopId: string): Promise<boolean> {
+    if (user.workshopId === workshopId) return true;
+    const grant = await this.prisma.workshopAccess.findUnique({
+      where: { userId_workshopId: { userId: user.id, workshopId } },
+    });
+    return grant !== null;
   }
 
   async logout(userId: string): Promise<void> {
@@ -89,8 +125,13 @@ export class AuthService {
 
   // ── Internals ──────────────────────────────────────────────────────────────
 
-  private async issueTokens(user: User): Promise<Tokens> {
-    const payload: AccessTokenPayload = { sub: user.id, email: user.email, role: user.role };
+  private async issueTokens(user: User, workshopId: string): Promise<Tokens> {
+    const payload: AccessTokenPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      workshopId,
+    };
     // expiresIn comes from env (a string like "15m"/"30d"); cast past the `ms`
     // StringValue template type.
     const accessTtl = (process.env.JWT_ACCESS_TTL ?? '15m') as unknown as number;

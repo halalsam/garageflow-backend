@@ -16,13 +16,13 @@ export class ApprovalsController {
   constructor(private readonly estimates: EstimatesService) {}
 
   @Get()
-  list() {
-    return this.estimates.listApprovals();
+  list(@CurrentUser('workshopId') workshopId: string) {
+    return this.estimates.listApprovals(workshopId);
   }
 
   @Get(':id')
-  getOne(@Param('id') id: string) {
-    return this.estimates.getApproval(id);
+  getOne(@Param('id') id: string, @CurrentUser('workshopId') workshopId: string) {
+    return this.estimates.getApproval(id, workshopId);
   }
 
   @Post(':id/decision')

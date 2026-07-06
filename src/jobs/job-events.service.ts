@@ -15,7 +15,8 @@ export type EmitEventInput = {
 // The single write+broadcast path for job-card events, reused by JobsService
 // (comments/photos/parts/status) and EstimatesService (approval/system). It
 // persists the row, serializes it, and fans it out over the gateway. Reads use
-// keyset (cursor) pagination, newest-first, so the client can scroll upward.
+// keyset (cursor) pagination over the monotonic `sequenceNumber`, newest-first,
+// so the client can scroll upward in a stable order.
 @Injectable()
 export class JobEventsService {
   constructor(
@@ -40,24 +41,18 @@ export class JobEventsService {
     return dto;
   }
 
-  // Newest-first keyset page over (createdAt, id). `take: limit + 1` peeks at
-  // the next row to decide whether there's another page.
+  // Newest-first keyset page over `sequenceNumber` — a monotonic integer, so
+  // unlike (createdAt, id) it can't produce ties or skip/repeat rows.
+  // `take: limit + 1` peeks at the next row to decide whether there's another page.
   async listEvents(jobId: string, opts: { cursor?: string; limit: number }) {
     const decoded = opts.cursor ? decodeCursor(opts.cursor) : undefined;
     const rows = await this.prisma.jobCardEvent.findMany({
       where: {
         jobId,
-        ...(decoded
-          ? {
-              OR: [
-                { createdAt: { lt: decoded.createdAt } },
-                { createdAt: decoded.createdAt, id: { lt: decoded.id } },
-              ],
-            }
-          : {}),
+        ...(decoded ? { sequenceNumber: { lt: decoded } } : {}),
       },
       include: eventInclude,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: { sequenceNumber: 'desc' },
       take: opts.limit + 1,
     });
 
@@ -66,21 +61,19 @@ export class JobEventsService {
     const last = page[page.length - 1];
     return {
       items: page.map(serializeEvent),
-      nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+      nextCursor: hasMore && last ? encodeCursor(last.sequenceNumber) : null,
     };
   }
 }
 
-// Opaque base64 cursor of `createdAtISO|id`.
-const encodeCursor = (createdAt: Date, id: string): string =>
-  Buffer.from(`${createdAt.toISOString()}|${id}`).toString('base64');
+// Opaque base64 cursor of the last row's `sequenceNumber`.
+const encodeCursor = (sequenceNumber: number): string =>
+  Buffer.from(String(sequenceNumber)).toString('base64');
 
-const decodeCursor = (cursor: string): { createdAt: Date; id: string } | undefined => {
+const decodeCursor = (cursor: string): number | undefined => {
   try {
-    const [iso, id] = Buffer.from(cursor, 'base64').toString('utf8').split('|');
-    const createdAt = new Date(iso);
-    if (!id || Number.isNaN(createdAt.getTime())) return undefined;
-    return { createdAt, id };
+    const n = Number(Buffer.from(cursor, 'base64').toString('utf8'));
+    return Number.isFinite(n) ? n : undefined;
   } catch {
     return undefined;
   }

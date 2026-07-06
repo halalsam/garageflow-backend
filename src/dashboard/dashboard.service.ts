@@ -18,14 +18,15 @@ export class DashboardService {
 
   async forUser(user: AuthUser) {
     // TECH lands on jobs, but keep the endpoint role-aware: scope to own jobs.
-    const techScope = user.role === UserRole.TECH ? { techId: user.id } : {};
+    const scope = { workshopId: user.workshopId };
+    const techScope = user.role === UserRole.TECH ? { ...scope, techId: user.id } : scope;
 
     const [jobsInProgress, awaitingApproval, dueForDelivery, activeJobsRows, summary] =
       await Promise.all([
         this.prisma.job.count({ where: { ...techScope, status: 'IN_PROGRESS' } }),
         user.role === UserRole.TECH
           ? this.prisma.job.count({ where: { ...techScope, status: 'REVIEW' } })
-          : this.prisma.estimate.count({ where: { status: 'PENDING' } }),
+          : this.prisma.estimate.count({ where: { status: 'PENDING', job: scope } }),
         this.prisma.job.count({ where: { ...techScope, status: 'COMPLETED' } }),
         this.prisma.job.findMany({
           where: { ...techScope, status: { not: 'COMPLETED' } },
@@ -33,7 +34,7 @@ export class DashboardService {
           orderBy: { updatedAt: 'desc' },
           take: 10,
         }),
-        this.finance.summary(),
+        this.finance.summary(user.workshopId),
       ]);
 
     const activeJobs = activeJobsRows.map(serializeJob);
@@ -59,9 +60,9 @@ export class DashboardService {
     };
   }
 
-  private async recentActivity(techScope: { techId?: string }) {
+  private async recentActivity(techScope: { workshopId: string; techId?: string }) {
     const events = await this.prisma.jobCardEvent.findMany({
-      where: techScope.techId ? { job: { techId: techScope.techId } } : {},
+      where: { job: techScope },
       include: { author: true, job: { include: { vehicle: true } } },
       orderBy: { createdAt: 'desc' },
       take: 8,

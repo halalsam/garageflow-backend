@@ -25,9 +25,9 @@ export class EstimatesService {
 
   // The workshop's configured GST rate — the default when an estimate doesn't
   // specify one explicitly.
-  async defaultGstRate(): Promise<number> {
+  async defaultGstRate(workshopId: string): Promise<number> {
     try {
-      return (await this.workshops.activeRow()).gstRate;
+      return (await this.workshops.getById(workshopId)).gstRate;
     } catch {
       return 18;
     }
@@ -35,8 +35,8 @@ export class EstimatesService {
 
   // Submit (or resubmit) an estimate for a job → sets the job to REVIEW.
   async submit(jobCode: string, dto: SubmitEstimateDto, user: AuthUser) {
-    const job = await this.prisma.job.findUnique({
-      where: { code: jobCode },
+    const job = await this.prisma.job.findFirst({
+      where: { code: jobCode, workshopId: user.workshopId },
       include: { vehicle: true },
     });
     if (!job) throw new NotFoundException('Job not found');
@@ -47,7 +47,7 @@ export class EstimatesService {
       amountPaise: toPaise(l.amount),
     }));
 
-    const gstRate = dto.gstRate ?? (await this.defaultGstRate());
+    const gstRate = dto.gstRate ?? (await this.defaultGstRate(user.workshopId));
 
     // One estimate per job (jobId @unique): replace lines on resubmit.
     const existing = await this.prisma.estimate.findUnique({ where: { jobId: job.id } });
@@ -84,6 +84,7 @@ export class EstimatesService {
     // An estimate is now awaiting a decision — ping the approvers.
     void this.notifications.pushToRoles(
       [UserRole.MANAGER, UserRole.ADMIN],
+      user.workshopId,
       {
         title: 'Estimate awaiting approval',
         body: `${job.vehicle.make} ${job.vehicle.model} · ${job.vehicle.plate}`,
@@ -92,21 +93,21 @@ export class EstimatesService {
       user.id,
     );
 
-    return this.getApproval(jobCode);
+    return this.getApproval(jobCode, user.workshopId);
   }
 
-  async listApprovals() {
+  async listApprovals(workshopId: string) {
     const estimates = await this.prisma.estimate.findMany({
-      where: { status: 'PENDING' },
+      where: { status: 'PENDING', job: { workshopId } },
       include: estimateInclude,
       orderBy: { createdAt: 'desc' },
     });
     return estimates.map(serializeApproval);
   }
 
-  async getApproval(jobCode: string) {
+  async getApproval(jobCode: string, workshopId: string) {
     const estimate = await this.prisma.estimate.findFirst({
-      where: { job: { code: jobCode } },
+      where: { job: { code: jobCode, workshopId } },
       include: estimateInclude,
     });
     if (!estimate) throw new NotFoundException('Approval not found');
@@ -117,7 +118,7 @@ export class EstimatesService {
   // Decline → back to the tech. Records decidedBy either way.
   async decide(jobCode: string, decision: 'approve' | 'decline', user: AuthUser) {
     const estimate = await this.prisma.estimate.findFirst({
-      where: { job: { code: jobCode } },
+      where: { job: { code: jobCode, workshopId: user.workshopId } },
       include: { ...estimateInclude, job: { include: { vehicle: true, customer: true, invoice: true } } },
     });
     if (!estimate) throw new NotFoundException('Approval not found');
@@ -152,10 +153,11 @@ export class EstimatesService {
 
     let invoiceId = estimate.job.invoice?.id;
     if (!invoiceId) {
-      const number = await this.nextInvoiceNumber();
+      const number = await this.nextInvoiceNumber(user.workshopId);
       const invoice = await this.prisma.invoice.create({
         data: {
           number,
+          workshopId: user.workshopId,
           jobId: estimate.jobId,
           customerId: estimate.job.customerId,
           vehicleId: estimate.job.vehicleId,
@@ -211,14 +213,14 @@ export class EstimatesService {
     });
   }
 
-  private async nextInvoiceNumber(): Promise<string> {
+  private async nextInvoiceNumber(workshopId: string): Promise<string> {
     let prefix = 'INV';
     try {
-      prefix = (await this.workshops.activeRow()).invoicePrefix;
+      prefix = (await this.workshops.getById(workshopId)).invoicePrefix;
     } catch {
       // no workshop configured yet — keep the default prefix
     }
-    const count = await this.prisma.invoice.count();
+    const count = await this.prisma.invoice.count({ where: { workshopId } });
     let n = 2048 + count;
     while (await this.prisma.invoice.findUnique({ where: { number: `${prefix}-${n}` } })) n++;
     return `${prefix}-${n}`;

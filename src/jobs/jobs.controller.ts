@@ -40,8 +40,8 @@ export class JobsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.jobs.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser('workshopId') workshopId: string) {
+    return this.jobs.findOne(id, workshopId);
   }
 
   @Post()
@@ -96,10 +96,11 @@ export class JobsController {
   @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
   addCompletionPhoto(
     @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
     @Body('side') side: string,
     @UploadedFiles() files: { image?: Array<{ originalname: string; buffer: Buffer }> },
   ) {
-    return this.jobs.saveCompletionPhoto(id, side, files?.image?.[0]);
+    return this.jobs.saveCompletionPhoto(id, user, side, files?.image?.[0]);
   }
 
   // Upload (or replace) one mandatory delivery walk-around photo for a job side.
@@ -107,10 +108,11 @@ export class JobsController {
   @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
   addDeliveryPhoto(
     @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
     @Body('side') side: string,
     @UploadedFiles() files: { image?: Array<{ originalname: string; buffer: Buffer }> },
   ) {
-    return this.jobs.saveDeliveryPhoto(id, side, files?.image?.[0]);
+    return this.jobs.saveDeliveryPhoto(id, user, side, files?.image?.[0]);
   }
 
   @Post(':id/parts')

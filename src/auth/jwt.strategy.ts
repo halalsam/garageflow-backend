@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -18,6 +18,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   validate(payload: AccessTokenPayload): AuthUser {
-    return { id: payload.sub, email: payload.email, role: payload.role };
+    // Pre-multi-tenancy tokens carry no workshopId; without it scoped queries
+    // would silently pass `workshopId: undefined` (i.e. no filter). Force a
+    // refresh — /auth/refresh re-mints from the DB row, which has it.
+    if (!payload.workshopId) throw new UnauthorizedException('Token predates workshop scoping');
+    return {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      workshopId: payload.workshopId,
+    };
   }
 }

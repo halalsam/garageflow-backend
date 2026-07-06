@@ -5,6 +5,8 @@ export type AuthUser = {
   id: string;
   email: string;
   role: UserRole;
+  /** The tenant every query is scoped to. Minted into the JWT at login. */
+  workshopId: string;
 };
 
 /** Pulls the authenticated user (set by JwtStrategy) off the request. */

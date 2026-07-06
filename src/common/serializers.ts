@@ -98,15 +98,18 @@ export const serializeTeamMember = (u: UserRow) => ({
 });
 
 // ── Workshop ─────────────────────────────────────────────────────────────────
+// `active` here means "the caller's current session is scoped to this
+// workshop" (see WorkshopsService.list/getActive) — a per-request fact, not a
+// stored one.
 type WorkshopRow = Prisma.WorkshopGetPayload<{}>;
-export const serializeWorkshop = (w: WorkshopRow, effectiveActive?: boolean) => ({
+export const serializeWorkshop = (w: WorkshopRow, active?: boolean) => ({
   id: w.id,
   name: w.name,
   gstin: w.gstin ?? undefined,
   address: w.address ?? undefined,
   phone: w.phone ?? undefined,
   logoUrl: w.logoUrl ?? undefined,
-  active: (effectiveActive ?? w.active) || undefined,
+  active: active || undefined,
   gstRate: w.gstRate,
   invoicePrefix: w.invoicePrefix,
   invoiceFooter: w.invoiceFooter ?? undefined,

@@ -13,15 +13,18 @@ export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
   // Paginated<Customer> — the one paginated list (ARCHITECTURE §4).
-  async search(query?: string, page = 1, pageSize = 20) {
-    const where: Prisma.CustomerWhereInput = query
-      ? {
-          OR: [
-            { name: { contains: query, mode: 'insensitive' } },
-            { phone: { contains: query, mode: 'insensitive' } },
-          ],
-        }
-      : {};
+  async search(workshopId: string, query?: string, page = 1, pageSize = 20) {
+    const where: Prisma.CustomerWhereInput = {
+      workshopId,
+      ...(query
+        ? {
+            OR: [
+              { name: { contains: query, mode: 'insensitive' } },
+              { phone: { contains: query, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.customer.findMany({
         where,
@@ -35,19 +38,20 @@ export class CustomersService {
     return paginate(rows.map(serializeCustomer), total, page, pageSize);
   }
 
-  async findOne(id: string) {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id },
+  async findOne(id: string, workshopId: string) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, workshopId },
       include: customerInclude,
     });
     if (!customer) throw new NotFoundException('Customer not found');
     return serializeCustomer(customer);
   }
 
-  async create(dto: CreateCustomerDto) {
-    const count = await this.prisma.customer.count();
+  async create(dto: CreateCustomerDto, workshopId: string) {
+    const count = await this.prisma.customer.count({ where: { workshopId } });
     const customer = await this.prisma.customer.create({
       data: {
+        workshopId,
         name: dto.name,
         phone: dto.phone,
         initials: initialsOf(dto.name),
@@ -58,8 +62,8 @@ export class CustomersService {
     return serializeCustomer(customer);
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
-    await this.findOne(id);
+  async update(id: string, dto: UpdateCustomerDto, workshopId: string) {
+    await this.findOne(id, workshopId);
     const customer = await this.prisma.customer.update({
       where: { id },
       data: {

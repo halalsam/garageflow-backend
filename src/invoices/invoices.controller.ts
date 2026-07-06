@@ -15,13 +15,13 @@ export class InvoicesController {
   constructor(private readonly invoices: InvoicesService) {}
 
   @Get()
-  list(@Query('status') status?: string) {
-    return this.invoices.list(status);
+  list(@CurrentUser('workshopId') workshopId: string, @Query('status') status?: string) {
+    return this.invoices.list(workshopId, status);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.invoices.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser('workshopId') workshopId: string) {
+    return this.invoices.findOne(id, workshopId);
   }
 
   @Post(':id/payments')

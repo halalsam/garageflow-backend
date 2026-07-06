@@ -24,17 +24,38 @@ model Workshop {
   address   String?
   phone     String?
   logoUrl   String? // uploaded via POST /workshops/:id/logo
-  // The workshop the app currently operates as; exactly one should be active.
-  active    Boolean  @default(false)
   // Invoice preferences (used when estimates/invoices are generated).
   gstRate       Int     @default(18) // percent
   invoicePrefix String  @default("INV")
   invoiceFooter String?
   createdAt DateTime @default(now())
+
+  users     User[]
+  customers Customer[]
+  vehicles  Vehicle[]
+  jobs      Job[]
+  invoices  Invoice[]
+  access    WorkshopAccess[]
+}
+
+// Grants a user the right to switch their session into this workshop (see
+// POST /workshops/:id/switch). A user's own `workshopId` (their home) is
+// always implicitly accessible without a row here.
+model WorkshopAccess {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  workshop   Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  workshopId String
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, workshopId])
 }
 
 model User {
   id               String   @id @default(uuid())
+  workshop         Workshop @relation(fields: [workshopId], references: [id], onDelete: Restrict)
+  workshopId       String
   name             String
   email            String   @unique
   passwordHash     String
@@ -58,6 +79,9 @@ model User {
   jobReads          JobRead[]
   deviceTokens      DeviceToken[]
   notifications     Notification[]
+  workshopAccess    WorkshopAccess[]
+
+  @@index([workshopId])
 }
 
 // An Expo push token for one of a user's devices. A user may have several (phone
@@ -92,15 +116,19 @@ model Notification {
 }
 
 model Customer {
-  id        String    @id @default(uuid())
-  name      String
-  initials  String
-  color     String    @default("c")
-  phone     String?
-  vehicles  Vehicle[]
-  jobs      Job[]
-  invoices  Invoice[]
-  createdAt DateTime  @default(now())
+  id         String    @id @default(uuid())
+  workshop   Workshop  @relation(fields: [workshopId], references: [id], onDelete: Restrict)
+  workshopId String
+  name       String
+  initials   String
+  color      String    @default("c")
+  phone      String?
+  vehicles   Vehicle[]
+  jobs       Job[]
+  invoices   Invoice[]
+  createdAt  DateTime  @default(now())
+
+  @@index([workshopId])
 }
 
 enum VehicleType {
@@ -113,6 +141,8 @@ enum VehicleType {
 
 model Vehicle {
   id         String      @id @default(uuid())
+  workshop   Workshop    @relation(fields: [workshopId], references: [id], onDelete: Restrict)
+  workshopId String
   customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
   customerId String
   plate      String // "DL 3C AT 7788"
@@ -124,6 +154,8 @@ model Vehicle {
   jobs       Job[]
   invoices   Invoice[]
   createdAt  DateTime    @default(now())
+
+  @@index([workshopId])
 }
 
 enum JobStatus {
@@ -142,9 +174,13 @@ enum Priority {
 model Job {
   id         String   @id @default(uuid())
   code       String   @unique // "j1"-style short code
-  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  workshop   Workshop @relation(fields: [workshopId], references: [id], onDelete: Restrict)
+  workshopId String
+  // Restrict: jobs are historical records — their vehicle/customer can't be
+  // deleted out from under them.
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
   vehicleId  String
-  customer   Customer @relation(fields: [customerId], references: [id])
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
   customerId String
   tech       User?    @relation("JobTech", fields: [techId], references: [id])
   techId     String?
@@ -172,6 +208,8 @@ model Job {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([workshopId])
 }
 
 // The four mandatory walk-around photos a technician must capture before a job
@@ -229,18 +267,21 @@ enum JobEventType {
 }
 
 model JobCardEvent {
-  id        String       @id @default(uuid())
-  job       Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  jobId     String
-  author    User?        @relation(fields: [authorId], references: [id])
-  authorId  String?
-  type      JobEventType
-  body      String? // COMMENT / SYSTEM text
-  payload   Json? // type-specific fields
-  clientId  String? // sender's optimistic id, echoed back
-  createdAt DateTime     @default(now())
+  id             String       @id @default(uuid())
+  // Monotonic insert order — the keyset-pagination cursor. UUID `id` is random,
+  // so it can't break ties; a global sequence orders the feed stably.
+  sequenceNumber Int          @unique @default(autoincrement())
+  job            Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId          String
+  author         User?        @relation(fields: [authorId], references: [id])
+  authorId       String?
+  type           JobEventType
+  body           String? // COMMENT / SYSTEM text
+  payload        Json? // type-specific fields
+  clientId       String? // sender's optimistic id, echoed back
+  createdAt      DateTime     @default(now())
 
-  @@index([jobId, createdAt, id]) // keyset cursor pagination
+  @@index([jobId, sequenceNumber]) // keyset cursor pagination
   @@index([clientId])
 }
 
@@ -292,6 +333,8 @@ model EstimateLine {
 model Invoice {
   id         String        @id @default(uuid())
   number     String        @unique // "INV-2048"
+  workshop   Workshop      @relation(fields: [workshopId], references: [id], onDelete: Restrict)
+  workshopId String
   job        Job?          @relation(fields: [jobId], references: [id])
   jobId      String?       @unique
   customer   Customer      @relation(fields: [customerId], references: [id])
@@ -304,6 +347,8 @@ model Invoice {
   payments   Payment[]
   createdAt  DateTime      @default(now())
   // subtotal/gst/total + paid/balance/status are DERIVED, never stored.
+
+  @@index([workshopId])
 }
 
 model InvoiceLine {

@@ -19,14 +19,15 @@ const DEFAULT_INVITE_PASSWORD = 'garageflow123';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  async list(workshopId: string) {
     const users = await this.prisma.user.findMany({
+      where: { workshopId },
       orderBy: [{ role: 'desc' }, { name: 'asc' }],
     });
     return users.map(serializeTeamMember);
   }
 
-  async create(dto: CreateTeamMemberDto) {
+  async create(dto: CreateTeamMemberDto, workshopId: string) {
     const email = dto.email.toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -35,10 +36,11 @@ export class UsersService {
         errors: { email: ['Already in use'] },
       });
     }
-    const count = await this.prisma.user.count();
+    const count = await this.prisma.user.count({ where: { workshopId } });
     const passwordHash = await bcrypt.hash(dto.password ?? DEFAULT_INVITE_PASSWORD, 10);
     const user = await this.prisma.user.create({
       data: {
+        workshopId,
         name: dto.name,
         email,
         phone: dto.phone,
@@ -52,8 +54,8 @@ export class UsersService {
     return serializeTeamMember(user);
   }
 
-  async update(id: string, dto: UpdateTeamMemberDto) {
-    await this.ensureExists(id);
+  async update(id: string, dto: UpdateTeamMemberDto, workshopId: string) {
+    await this.ensureExists(id, workshopId);
     const user = await this.prisma.user.update({
       where: { id },
       data: {
@@ -64,8 +66,8 @@ export class UsersService {
     return serializeTeamMember(user);
   }
 
-  private async ensureExists(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+  private async ensureExists(id: string, workshopId: string) {
+    const user = await this.prisma.user.findFirst({ where: { id, workshopId } });
     if (!user) throw new NotFoundException('Team member not found');
     return user;
   }
