@@ -192,6 +192,9 @@ export const serializeJob = (j: JobRow) => ({
   // `id` rides along so the app can match the assigned tech against /team.
   tech: j.tech ? { id: j.tech.id, ...serializePerson(j.tech) } : undefined,
   ...jobStatusToApi[j.status],
+  // Whether a technician has ever started work — status alone can't tell (a
+  // started job parks in REVIEW while a resubmitted estimate is decided).
+  started: !!j.startedAt,
   priority: priorityToApi[j.priority],
   complaint: j.complaint ?? undefined,
   progress: j.progress ?? undefined,

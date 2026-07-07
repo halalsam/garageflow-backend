@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { JobEventType, Prisma, UserRole } from '@prisma/client';
+import { JobEventType, JobStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/storage/storage.service';
 import {
@@ -33,6 +33,18 @@ import { UpdateJobDto } from './dto/update-job.dto';
 import { CreateEventDto } from './dto/create-event.dto';
 import { ListEventsDto } from './dto/list-events.dto';
 import { PartLineDto } from './dto/add-parts.dto';
+
+// The job lifecycle a PATCH may drive. REVIEW and NOT_STARTED are entered by
+// the estimate flow (submit → REVIEW, decision → back), never by the client;
+// DELIVERED is terminal.
+const ALLOWED_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
+  NOT_STARTED: [JobStatus.IN_PROGRESS],
+  REVIEW: [],
+  IN_PROGRESS: [JobStatus.AWAITING_PART, JobStatus.COMPLETED],
+  AWAITING_PART: [JobStatus.IN_PROGRESS, JobStatus.COMPLETED],
+  COMPLETED: [JobStatus.IN_PROGRESS, JobStatus.DELIVERED],
+  DELIVERED: [],
+};
 
 @Injectable()
 export class JobsService {
@@ -219,6 +231,22 @@ export class JobsService {
     if (dto.techId !== undefined && user.role === UserRole.TECH) {
       throw new ForbiddenException('Technicians cannot reassign jobs');
     }
+    const newStatus = dto.status ? apiToJobStatus[dto.status] : undefined;
+    if (newStatus && newStatus !== job.status) {
+      // Nothing moves while an estimate is awaiting a decision; the decision
+      // itself (estimates.service) releases the job.
+      if (job.status === 'REVIEW') {
+        throw new BadRequestException(
+          'Estimate is awaiting approval — work can continue once it is decided',
+        );
+      }
+      if (!ALLOWED_TRANSITIONS[job.status].includes(newStatus)) {
+        throw new BadRequestException(
+          `A ${jobStatusToApi[job.status].status} job can't move to ${jobStatusToApi[newStatus].status}`,
+        );
+      }
+    }
+    const startingNow = newStatus === 'IN_PROGRESS' && !job.startedAt;
     if (dto.techId) {
       const tech = await this.prisma.user.findFirst({
         where: { id: dto.techId, workshopId: user.workshopId },
@@ -253,6 +281,7 @@ export class JobsService {
       where: { id: job.id },
       data: {
         ...(dto.status ? { status: apiToJobStatus[dto.status] } : {}),
+        ...(startingNow ? { startedAt: new Date() } : {}),
         ...(dto.progress !== undefined ? { progress: dto.progress } : {}),
         ...(dto.techId !== undefined ? { techId: dto.techId || null } : {}),
         ...(dto.bay !== undefined ? { bay: dto.bay } : {}),
@@ -268,17 +297,29 @@ export class JobsService {
       },
     });
 
-    // Record an actual status transition on the timeline.
-    const newStatus = dto.status ? apiToJobStatus[dto.status] : undefined;
+    // Record an actual status transition on the timeline. The first move into
+    // IN_PROGRESS reads as "<tech> has started work" instead of a status pill.
     if (newStatus && newStatus !== job.status) {
-      await this.events.emit(job.id, {
-        type: JobEventType.STATUS_CHANGE,
-        authorId: user.id,
-        payload: {
-          from: jobStatusToApi[job.status].status,
-          to: jobStatusToApi[newStatus].status,
-        },
-      });
+      if (startingNow) {
+        const author = await this.prisma.user.findUnique({
+          where: { id: user.id },
+          select: { name: true },
+        });
+        await this.events.emit(job.id, {
+          type: JobEventType.SYSTEM,
+          body: `${author?.name ?? 'Technician'} has started work`,
+          payload: { kind: 'work_started' },
+        });
+      } else {
+        await this.events.emit(job.id, {
+          type: JobEventType.STATUS_CHANGE,
+          authorId: user.id,
+          payload: {
+            from: jobStatusToApi[job.status].status,
+            to: jobStatusToApi[newStatus].status,
+          },
+        });
+      }
     }
 
     // A newly-assigned tech (skip re-assigns to the same person + self-assigns).

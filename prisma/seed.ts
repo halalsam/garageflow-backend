@@ -71,16 +71,18 @@ async function main() {
 
   // ── Jobs ───────────────────────────────────────────────────────────────────
   const j1 = await prisma.job.create({
-    data: { workshopId, code: 'j1', vehicleId: swift.id, customerId: rakesh.id, techId: arjun.id, status: 'IN_PROGRESS', bay: 'BAY 2', priority: 'HIGH', complaint: 'AC not cooling, strange noise from blower', progress: 65 },
+    data: { workshopId, code: 'j1', vehicleId: swift.id, customerId: rakesh.id, techId: arjun.id, status: 'IN_PROGRESS', startedAt: minsAgo(90), bay: 'BAY 2', priority: 'HIGH', complaint: 'AC not cooling, strange noise from blower', progress: 65 },
   });
   const j2 = await prisma.job.create({
-    data: { workshopId, code: 'j2', vehicleId: creta.id, customerId: sneha.id, techId: suresh.id, status: 'AWAITING_PART', bay: 'BAY 4', priority: 'NORMAL', complaint: 'Periodic service + AC gas top-up', progress: 40 },
+    // Work started, then extra work surfaced → estimate resubmitted, so the job
+    // is parked in REVIEW until the office decides (resumes IN_PROGRESS on approve).
+    data: { workshopId, code: 'j2', vehicleId: creta.id, customerId: sneha.id, techId: suresh.id, status: 'REVIEW', startedAt: minsAgo(120), bay: 'BAY 4', priority: 'NORMAL', complaint: 'Periodic service + AC gas top-up', progress: 40 },
   });
   const j3 = await prisma.job.create({
     data: { workshopId, code: 'j3', vehicleId: nexon.id, customerId: rakesh.id, status: 'REVIEW', priority: 'NORMAL', complaint: 'Brakes squealing, soft pedal', progress: 0 },
   });
   const j4 = await prisma.job.create({
-    data: { workshopId, code: 'j4', vehicleId: city.id, customerId: rakesh.id, techId: arjun.id, status: 'COMPLETED', priority: 'NORMAL', progress: 100 },
+    data: { workshopId, code: 'j4', vehicleId: city.id, customerId: rakesh.id, techId: arjun.id, status: 'COMPLETED', startedAt: minsAgo(240), priority: 'NORMAL', progress: 100 },
   });
 
   // ── Estimates / Approvals (PENDING) ────────────────────────────────────────
@@ -105,12 +107,17 @@ async function main() {
       ] },
     },
   });
+  // j1 has no estimate yet — a walk-in Arjun started directly; he'll submit
+  // one once the diagnosis is done. j4 rolled through the whole flow:
+  // approved estimate → invoice INV-2048.
   await prisma.estimate.create({
     data: {
-      jobId: j1.id, submittedById: arjun.id, status: 'PENDING', gstRate: 18, createdAt: minsAgo(60),
+      jobId: j4.id, submittedById: arjun.id, status: 'APPROVED', decidedById: rashid.id, gstRate: 18, createdAt: utc('2026-06-26T11:00:00'),
       lines: { create: [
-        { label: 'Blower motor assembly', note: '1 × ₹2,400', amountPaise: rupees(2400) },
-        { label: 'AC service & gas top-up', note: 'Labour', amountPaise: rupees(1500) },
+        { label: 'Brake pad replacement', note: 'Labour', amountPaise: rupees(1800) },
+        { label: 'Front brake pads', note: '2 × ₹2,400', amountPaise: rupees(4800) },
+        { label: 'Brake fluid flush', note: 'Labour', amountPaise: rupees(900) },
+        { label: 'Wheel alignment', note: 'Labour', amountPaise: rupees(4534) },
       ] },
     },
   });
@@ -118,7 +125,7 @@ async function main() {
   // ── Timelines / events (j1 + j4) ───────────────────────────────────────────
   await prisma.jobCardEvent.createMany({
     data: [
-      { jobId: j1.id, type: 'SYSTEM', body: 'Approved by Priya · 8:30 AM', createdAt: utc('2026-06-27T08:30:00') },
+      { jobId: j1.id, type: 'SYSTEM', body: 'Arjun Patel has started work', payload: { kind: 'work_started' }, createdAt: utc('2026-06-27T08:30:00') },
       { jobId: j1.id, type: 'COMMENT', authorId: arjun.id, body: 'Customer says noise starts after 10 min of driving. Please check blower motor first.', createdAt: utc('2026-06-27T08:34:00') },
       { jobId: j1.id, type: 'PHOTO', authorId: arjun.id, payload: { tag: 'BEFORE · BLOWER', url: `${publicUrl}/uploads/seed/blower-before.jpg` }, createdAt: utc('2026-06-27T08:52:00') },
       { jobId: j1.id, type: 'PART_ADDED', authorId: arjun.id, payload: { partName: 'Blower Motor Assembly', qty: 1, pricePaise: rupees(2400) }, createdAt: utc('2026-06-27T09:12:00') },
@@ -126,7 +133,7 @@ async function main() {
       { jobId: j4.id, type: 'SYSTEM', body: 'Approved · released to Arjun', createdAt: utc('2026-06-26T11:18:00') },
       { jobId: j4.id, type: 'COMMENT', authorId: arjun.id, body: 'Brake pads replaced, fluid flushed. Test drive done — pedal firm now.', createdAt: utc('2026-06-26T11:20:00') },
       { jobId: j4.id, type: 'PHOTO', authorId: arjun.id, payload: { tag: 'AFTER · BRAKES', url: `${publicUrl}/uploads/seed/brakes-after.jpg` }, createdAt: utc('2026-06-26T11:22:00') },
-      { jobId: j4.id, type: 'STATUS_CHANGE', authorId: arjun.id, payload: { from: 'REVIEW', to: 'COMPLETED' }, createdAt: utc('2026-06-26T11:25:00') },
+      { jobId: j4.id, type: 'STATUS_CHANGE', authorId: arjun.id, payload: { from: 'IN PROGRESS', to: 'COMPLETED' }, createdAt: utc('2026-06-26T11:25:00') },
     ],
   });
 

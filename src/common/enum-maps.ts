@@ -14,6 +14,7 @@ import {
 export type Tone = 'gray' | 'blue' | 'green' | 'amber' | 'purple' | 'red';
 
 export const jobStatusToApi: Record<JobStatus, { status: string; tone: Tone }> = {
+  NOT_STARTED: { status: 'NOT STARTED', tone: 'gray' },
   IN_PROGRESS: { status: 'IN PROGRESS', tone: 'blue' },
   AWAITING_PART: { status: 'AWAITING PART', tone: 'amber' },
   REVIEW: { status: 'REVIEW', tone: 'purple' },
@@ -22,6 +23,8 @@ export const jobStatusToApi: Record<JobStatus, { status: string; tone: Tone }> =
 };
 
 export const apiToJobStatus: Record<string, JobStatus> = {
+  'NOT STARTED': JobStatus.NOT_STARTED,
+  NOT_STARTED: JobStatus.NOT_STARTED,
   'IN PROGRESS': JobStatus.IN_PROGRESS,
   IN_PROGRESS: JobStatus.IN_PROGRESS,
   'AWAITING PART': JobStatus.AWAITING_PART,

@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { JobEventType, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -40,6 +45,10 @@ export class EstimatesService {
       include: { vehicle: true },
     });
     if (!job) throw new NotFoundException('Job not found');
+    // The vehicle is already with the customer — nothing left to estimate.
+    if (job.status === 'DELIVERED') {
+      throw new BadRequestException('This job is delivered; estimates can no longer be submitted');
+    }
 
     const lineData = dto.lines.map((l) => ({
       label: l.label,
@@ -131,9 +140,11 @@ export class EstimatesService {
         where: { id: estimate.id },
         data: { status: 'DECLINED', decidedById: user.id },
       });
+      // A declined estimate doesn't authorise work: unstarted jobs stay
+      // NOT_STARTED; jobs already underway resume IN_PROGRESS.
       await this.prisma.job.update({
         where: { id: estimate.jobId },
-        data: { status: 'IN_PROGRESS' },
+        data: { status: estimate.job.startedAt ? 'IN_PROGRESS' : 'NOT_STARTED' },
       });
       await this.events.emit(estimate.jobId, {
         type: JobEventType.APPROVAL,
@@ -175,9 +186,11 @@ export class EstimatesService {
       invoiceId = invoice.id;
     }
 
+    // Approval releases the job but doesn't start it — the technician taps
+    // "Start work" (jobs already underway before a resubmit resume as started).
     await this.prisma.job.update({
       where: { id: estimate.jobId },
-      data: { status: 'IN_PROGRESS' },
+      data: { status: estimate.job.startedAt ? 'IN_PROGRESS' : 'NOT_STARTED' },
     });
     await this.events.emit(estimate.jobId, {
       type: JobEventType.APPROVAL,

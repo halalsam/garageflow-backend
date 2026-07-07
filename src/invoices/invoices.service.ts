@@ -8,7 +8,7 @@ import {
   serializeInvoice,
   serializePayment,
 } from '../common/serializers';
-import { apiToPaymentMethod, jobStatusToApi } from '../common/enum-maps';
+import { apiToPaymentMethod } from '../common/enum-maps';
 import { toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { JobEventsService } from '../jobs/job-events.service';
@@ -59,39 +59,26 @@ export class InvoicesService {
         takenById: user.id,
       },
     });
-    await this.closeJobIfSettled(invoiceId, user);
+    await this.noteIfSettled(invoiceId);
     return serializePayment(payment);
   }
 
-  // Once payments cover the invoice total, the linked job is finished: it moves
-  // to DELIVERED no matter where the payment was recorded from.
-  private async closeJobIfSettled(invoiceId: string, user: AuthUser) {
+  // Once payments cover the invoice total, note it on the job timeline. Money
+  // doesn't move the vehicle: the status stays put until the guided delivery
+  // flow (walk-around photos + hand-off note) marks the job DELIVERED.
+  private async noteIfSettled(invoiceId: string) {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: { lines: true, payments: true, job: true },
     });
-    if (!invoice?.job || invoice.job.status === 'DELIVERED') return;
+    if (!invoice?.job) return;
     const { total } = computeTotals(invoice.lines, invoice.gstRate);
     if (invoicePaid(invoice) < total) return;
 
-    const from = invoice.job.status;
-    await this.prisma.job.update({
-      where: { id: invoice.job.id },
-      data: {
-        status: 'DELIVERED',
-        progress: 100,
-        deliveredAt: new Date(),
-        deliveredById: user.id,
-      },
-    });
-    await this.events.emit(invoice.job.id, {
-      type: JobEventType.STATUS_CHANGE,
-      authorId: user.id,
-      payload: { from: jobStatusToApi[from].status, to: jobStatusToApi.DELIVERED.status },
-    });
     await this.events.emit(invoice.job.id, {
       type: JobEventType.SYSTEM,
-      body: `Invoice ${invoice.number} paid in full — job closed`,
+      body: `Invoice ${invoice.number} paid in full`,
+      payload: { tone: 'green', icon: 'check-circle' },
     });
   }
 }

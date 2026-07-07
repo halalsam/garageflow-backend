@@ -29,7 +29,8 @@ export class DashboardService {
           : this.prisma.estimate.count({ where: { status: 'PENDING', job: scope } }),
         this.prisma.job.count({ where: { ...techScope, status: 'COMPLETED' } }),
         this.prisma.job.findMany({
-          where: { ...techScope, status: { not: 'COMPLETED' } },
+          // On the floor = anything not yet finished or handed over.
+          where: { ...techScope, status: { notIn: ['COMPLETED', 'DELIVERED'] } },
           include: jobInclude,
           orderBy: { updatedAt: 'desc' },
           take: 10,

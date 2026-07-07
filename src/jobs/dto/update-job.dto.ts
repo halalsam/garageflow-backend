@@ -2,12 +2,13 @@ import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class UpdateJobDto {
   @IsOptional()
+  // NOT_STARTED and REVIEW are server-set (estimate submit/decision), so a
+  // PATCH may only drive the working statuses.
   @IsIn([
     'IN PROGRESS',
     'IN_PROGRESS',
     'AWAITING PART',
     'AWAITING_PART',
-    'REVIEW',
     'COMPLETED',
     'DELIVERED',
   ])

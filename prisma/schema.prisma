@@ -159,6 +159,7 @@ model Vehicle {
 }
 
 enum JobStatus {
+  NOT_STARTED
   IN_PROGRESS
   AWAITING_PART
   REVIEW
@@ -184,12 +185,15 @@ model Job {
   customerId String
   tech       User?    @relation("JobTech", fields: [techId], references: [id])
   techId     String?
-  status     JobStatus @default(IN_PROGRESS)
+  status     JobStatus @default(NOT_STARTED)
   bay        String?
   priority   Priority  @default(NORMAL)
   complaint  String?
   odometer   Int?
   progress   Int       @default(0) // 0-100
+  // First moment a technician moved the job to IN_PROGRESS. Lets an estimate
+  // decision restore the right status (started jobs resume, unstarted stay put).
+  startedAt  DateTime?
 
   // Hand-off to the customer. Set when status moves to DELIVERED; the note is
   // text and/or a voice recording captured in the guided delivery flow.
