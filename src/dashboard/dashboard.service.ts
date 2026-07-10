@@ -65,7 +65,8 @@ export class DashboardService {
     const events = await this.prisma.jobCardEvent.findMany({
       where: { job: techScope },
       include: { author: true, job: { include: { vehicle: true } } },
-      orderBy: { createdAt: 'desc' },
+      // Insert order — same as createdAt but backed by the unique index.
+      orderBy: { sequenceNumber: 'desc' },
       take: 8,
     });
     return events.map((e) => ({

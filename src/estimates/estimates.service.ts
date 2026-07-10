@@ -58,32 +58,50 @@ export class EstimatesService {
 
     const gstRate = dto.gstRate ?? (await this.defaultGstRate(user.workshopId));
 
-    // One estimate per job (jobId @unique): replace lines on resubmit.
+    // Park the job in REVIEW, remembering where it came from (unless a double
+    // submit finds it already parked) so the decision can restore it exactly.
+    const parkInReview = this.prisma.job.update({
+      where: { id: job.id },
+      data: {
+        status: 'REVIEW',
+        ...(job.status !== 'REVIEW' ? { statusBeforeReview: job.status } : {}),
+      },
+    });
+
+    // One estimate per job (jobId @unique): replace lines on resubmit. A
+    // resubmission is a fresh request, so it's re-dated — approvals age and
+    // sort by the latest submission, and decide() uses createdAt as its
+    // optimistic-concurrency version.
     const existing = await this.prisma.estimate.findUnique({ where: { jobId: job.id } });
     if (existing) {
-      await this.prisma.estimateLine.deleteMany({ where: { estimateId: existing.id } });
-      await this.prisma.estimate.update({
-        where: { id: existing.id },
-        data: {
-          submittedById: user.id,
-          status: 'PENDING',
-          gstRate,
-          decidedById: null,
-          lines: { create: lineData },
-        },
-      });
+      await this.prisma.$transaction([
+        this.prisma.estimateLine.deleteMany({ where: { estimateId: existing.id } }),
+        this.prisma.estimate.update({
+          where: { id: existing.id },
+          data: {
+            submittedById: user.id,
+            status: 'PENDING',
+            gstRate,
+            decidedById: null,
+            createdAt: new Date(),
+            lines: { create: lineData },
+          },
+        }),
+        parkInReview,
+      ]);
     } else {
-      await this.prisma.estimate.create({
-        data: {
-          jobId: job.id,
-          submittedById: user.id,
-          gstRate,
-          lines: { create: lineData },
-        },
-      });
+      await this.prisma.$transaction([
+        this.prisma.estimate.create({
+          data: {
+            jobId: job.id,
+            submittedById: user.id,
+            gstRate,
+            lines: { create: lineData },
+          },
+        }),
+        parkInReview,
+      ]);
     }
-
-    await this.prisma.job.update({ where: { id: job.id }, data: { status: 'REVIEW' } });
 
     await this.events.emit(job.id, {
       type: JobEventType.SYSTEM,
@@ -123,7 +141,7 @@ export class EstimatesService {
     return serializeApproval(estimate);
   }
 
-  // Approve → generate an Invoice from the estimate + advance the job.
+  // Approve → materialise the estimate into the job's invoice + release the job.
   // Decline → back to the tech. Records decidedBy either way.
   async decide(jobCode: string, decision: 'approve' | 'decline', user: AuthUser) {
     const estimate = await this.prisma.estimate.findFirst({
@@ -135,17 +153,35 @@ export class EstimatesService {
       throw new ConflictException('This estimate has already been decided');
     }
 
+    // Claim the decision atomically. Matching createdAt pins the exact
+    // submission we read above, so a concurrent decision — or a resubmit that
+    // slipped in between — makes this a no-op instead of a double decision.
+    const claimed = await this.prisma.estimate.updateMany({
+      where: { id: estimate.id, status: 'PENDING', createdAt: estimate.createdAt },
+      data: {
+        status: decision === 'approve' ? 'APPROVED' : 'DECLINED',
+        decidedById: user.id,
+      },
+    });
+    if (claimed.count === 0) {
+      throw new ConflictException('This estimate has already been decided');
+    }
+
+    // Either decision releases the job to where it was before REVIEW parked it
+    // (legacy rows without the stamp fall back to the startedAt heuristic).
+    // The decision doesn't start work — the technician taps "Start work".
+    const resumeStatus =
+      estimate.job.statusBeforeReview ?? (estimate.job.startedAt ? 'IN_PROGRESS' : 'NOT_STARTED');
+    const releaseJob = this.prisma.job.update({
+      where: { id: estimate.jobId },
+      data: {
+        ...(estimate.job.status === 'REVIEW' ? { status: resumeStatus } : {}),
+        statusBeforeReview: null,
+      },
+    });
+
     if (decision === 'decline') {
-      await this.prisma.estimate.update({
-        where: { id: estimate.id },
-        data: { status: 'DECLINED', decidedById: user.id },
-      });
-      // A declined estimate doesn't authorise work: unstarted jobs stay
-      // NOT_STARTED; jobs already underway resume IN_PROGRESS.
-      await this.prisma.job.update({
-        where: { id: estimate.jobId },
-        data: { status: estimate.job.startedAt ? 'IN_PROGRESS' : 'NOT_STARTED' },
-      });
+      await releaseJob;
       await this.events.emit(estimate.jobId, {
         type: JobEventType.APPROVAL,
         authorId: user.id,
@@ -156,42 +192,44 @@ export class EstimatesService {
       return { message: 'Estimate declined', invoice: null };
     }
 
-    // approve
-    await this.prisma.estimate.update({
-      where: { id: estimate.id },
-      data: { status: 'APPROVED', decidedById: user.id },
-    });
-
+    // approve — create the invoice on first approval; on approval of a
+    // resubmitted estimate refresh the existing invoice's lines + GST rate
+    // instead (paid/balance/status are derived, so payments stay consistent).
+    const lines = estimate.lines.map((l) => ({
+      label: l.label,
+      note: l.note,
+      amountPaise: l.amountPaise,
+    }));
     let invoiceId = estimate.job.invoice?.id;
-    if (!invoiceId) {
+    if (invoiceId) {
+      await this.prisma.$transaction([
+        this.prisma.invoiceLine.deleteMany({ where: { invoiceId } }),
+        this.prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { gstRate: estimate.gstRate, lines: { create: lines } },
+        }),
+        releaseJob,
+      ]);
+    } else {
       const number = await this.nextInvoiceNumber(user.workshopId);
-      const invoice = await this.prisma.invoice.create({
-        data: {
-          number,
-          workshopId: user.workshopId,
-          jobId: estimate.jobId,
-          customerId: estimate.job.customerId,
-          vehicleId: estimate.job.vehicleId,
-          gstRate: estimate.gstRate,
-          issuedAt: new Date(),
-          lines: {
-            create: estimate.lines.map((l) => ({
-              label: l.label,
-              note: l.note,
-              amountPaise: l.amountPaise,
-            })),
+      const [invoice] = await this.prisma.$transaction([
+        this.prisma.invoice.create({
+          data: {
+            number,
+            workshopId: user.workshopId,
+            jobId: estimate.jobId,
+            customerId: estimate.job.customerId,
+            vehicleId: estimate.job.vehicleId,
+            gstRate: estimate.gstRate,
+            issuedAt: new Date(),
+            lines: { create: lines },
           },
-        },
-      });
+        }),
+        releaseJob,
+      ]);
       invoiceId = invoice.id;
     }
 
-    // Approval releases the job but doesn't start it — the technician taps
-    // "Start work" (jobs already underway before a resubmit resume as started).
-    await this.prisma.job.update({
-      where: { id: estimate.jobId },
-      data: { status: estimate.job.startedAt ? 'IN_PROGRESS' : 'NOT_STARTED' },
-    });
     await this.events.emit(estimate.jobId, {
       type: JobEventType.APPROVAL,
       authorId: user.id,

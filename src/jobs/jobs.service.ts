@@ -22,7 +22,7 @@ import {
   apiToVehicleType,
   jobStatusToApi,
 } from '../common/enum-maps';
-import { initialsOf, toPaise } from '../common/format';
+import { initialsOf } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EstimatesService } from '../estimates/estimates.service';
@@ -45,6 +45,10 @@ const ALLOWED_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
   COMPLETED: [JobStatus.IN_PROGRESS, JobStatus.DELIVERED],
   DELIVERED: [],
 };
+
+// What resolveJob() returns — the row plus the vehicle the notification
+// bodies are built from.
+type ResolvedJob = Prisma.JobGetPayload<{ include: { vehicle: true } }>;
 
 @Injectable()
 export class JobsService {
@@ -101,6 +105,7 @@ export class JobsService {
   // the per-user/per-job read marker.
   async markRead(code: string, user: AuthUser) {
     const job = await this.resolveJob(code, user.workshopId);
+    assertJobAccess(job, user);
     await this.prisma.jobRead.upsert({
       where: { userId_jobId: { userId: user.id, jobId: job.id } },
       create: { userId: user.id, jobId: job.id },
@@ -117,6 +122,7 @@ export class JobsService {
     file?: { originalname: string; buffer: Buffer },
   ) {
     const job = await this.resolveJob(code, user.workshopId);
+    assertJobAccess(job, user);
     const SIDE = this.validSide(side);
     if (!file) throw new BadRequestException('Photo required');
     const url = await this.storage.save(file, `jobs/${job.id}/completion`);
@@ -136,6 +142,7 @@ export class JobsService {
     file?: { originalname: string; buffer: Buffer },
   ) {
     const job = await this.resolveJob(code, user.workshopId);
+    assertJobAccess(job, user);
     const SIDE = this.validSide(side);
     if (!file) throw new BadRequestException('Photo required');
     const url = await this.storage.save(file, `jobs/${job.id}/delivery`);
@@ -188,51 +195,41 @@ export class JobsService {
       vehicleId = vehicle.id;
     }
 
-    const code = await this.nextJobCode();
-    const job = await this.prisma.job.create({
-      data: {
-        code,
-        workshopId: user.workshopId,
-        vehicleId,
-        customerId,
-        complaint: dto.complaint,
-        odometer: dto.odometer,
-        priority: dto.priority ? apiToPriority[dto.priority] : undefined,
-        // a tech creating a job takes it; managers/admins assign later
-        techId: user.role === UserRole.TECH ? user.id : undefined,
-      },
+    const job = await this.createWithUniqueCode({
+      workshopId: user.workshopId,
+      vehicleId,
+      customerId,
+      complaint: dto.complaint,
+      odometer: dto.odometer,
+      priority: dto.priority ? apiToPriority[dto.priority] : undefined,
+      // a tech creating a job takes it; managers/admins assign later
+      techId: user.role === UserRole.TECH ? user.id : undefined,
     });
 
+    // The initial estimate rides the same path as POST /jobs/:id/estimate, so
+    // it also parks the job in REVIEW, logs the timeline event and pings the
+    // approvers — not just silently creating the rows.
     if (dto.lines?.length) {
-      await this.prisma.estimate.create({
-        data: {
-          jobId: job.id,
-          submittedById: user.id,
-          gstRate: await this.estimates.defaultGstRate(user.workshopId),
-          lines: {
-            create: dto.lines.map((l) => ({
-              label: l.label,
-              note: l.note,
-              amountPaise: toPaise(l.amount),
-            })),
-          },
-        },
-      });
-      await this.prisma.job.update({ where: { id: job.id }, data: { status: 'REVIEW' } });
+      await this.estimates.submit(job.code, { lines: dto.lines }, user);
     }
 
-    return this.findOne(code, user.workshopId);
+    return this.findOne(job.code, user.workshopId);
   }
 
   // ── Update (PATCH returns { message } by contract) ────────────────────────
 
   async update(code: string, dto: UpdateJobDto, user: AuthUser) {
     const job = await this.resolveJob(code, user.workshopId);
+    // Same rule as events/parts: techs may only drive their own jobs.
+    assertJobAccess(job, user);
     if (dto.techId !== undefined && user.role === UserRole.TECH) {
       throw new ForbiddenException('Technicians cannot reassign jobs');
     }
-    const newStatus = dto.status ? apiToJobStatus[dto.status] : undefined;
-    if (newStatus && newStatus !== job.status) {
+    // Re-sending the current status is a no-op, not a transition — it must not
+    // re-run side effects (delivery stamps, completion/delivery notifications).
+    const mapped = dto.status ? apiToJobStatus[dto.status] : undefined;
+    const newStatus = mapped === job.status ? undefined : mapped;
+    if (newStatus) {
       // Nothing moves while an estimate is awaiting a decision; the decision
       // itself (estimates.service) releases the job.
       if (job.status === 'REVIEW') {
@@ -247,9 +244,10 @@ export class JobsService {
       }
     }
     const startingNow = newStatus === 'IN_PROGRESS' && !job.startedAt;
+    const deliveringNow = newStatus === 'DELIVERED';
     if (dto.techId) {
       const tech = await this.prisma.user.findFirst({
-        where: { id: dto.techId, workshopId: user.workshopId },
+        where: { id: dto.techId, workshopId: user.workshopId, active: true },
       });
       if (!tech) throw new NotFoundException('Technician not found');
     }
@@ -257,8 +255,7 @@ export class JobsService {
     // is no longer gated on them (legacy jobs without photos stay completable).
     // Gate delivery on the four mandatory delivery walk-around photos + a
     // hand-off note (typed or a voice recording).
-    const deliverdNow = dto.status && apiToJobStatus[dto.status] === 'DELIVERED';
-    if (deliverdNow) {
+    if (deliveringNow) {
       const have = await this.prisma.deliveryPhoto.findMany({
         where: { jobId: job.id },
         select: { side: true },
@@ -280,13 +277,13 @@ export class JobsService {
     await this.prisma.job.update({
       where: { id: job.id },
       data: {
-        ...(dto.status ? { status: apiToJobStatus[dto.status] } : {}),
+        ...(newStatus ? { status: newStatus } : {}),
         ...(startingNow ? { startedAt: new Date() } : {}),
         ...(dto.progress !== undefined ? { progress: dto.progress } : {}),
         ...(dto.techId !== undefined ? { techId: dto.techId || null } : {}),
         ...(dto.bay !== undefined ? { bay: dto.bay } : {}),
         ...(dto.priority ? { priority: apiToPriority[dto.priority] } : {}),
-        ...(deliverdNow
+        ...(deliveringNow
           ? {
               deliveredAt: new Date(),
               deliveredById: user.id,
@@ -299,7 +296,7 @@ export class JobsService {
 
     // Record an actual status transition on the timeline. The first move into
     // IN_PROGRESS reads as "<tech> has started work" instead of a status pill.
-    if (newStatus && newStatus !== job.status) {
+    if (newStatus) {
       if (startingNow) {
         const author = await this.prisma.user.findUnique({
           where: { id: user.id },
@@ -324,68 +321,53 @@ export class JobsService {
 
     // A newly-assigned tech (skip re-assigns to the same person + self-assigns).
     if (dto.techId && dto.techId !== job.techId && dto.techId !== user.id) {
-      void this.notifyAssignment(job.id, job.code, dto.techId);
+      void this.notifyAssignment(job, dto.techId);
     }
     // Job marked complete → let the office know it's ready for delivery.
-    if (dto.status && apiToJobStatus[dto.status] === 'COMPLETED') {
-      void this.notifyCompleted(job.id, job.code, user.id);
+    if (newStatus === 'COMPLETED') {
+      void this.notifyCompleted(job, user.id);
     }
     // Vehicle handed to the customer → log it on the timeline + notify the office.
-    if (newStatus === 'DELIVERED' && job.status !== 'DELIVERED') {
+    if (deliveringNow) {
       await this.events.emit(job.id, {
         type: JobEventType.SYSTEM,
         body: 'Vehicle delivered to customer',
       });
-      void this.notifyDelivered(job.id, job.code, user.id);
+      void this.notifyDelivered(job, user.id);
     }
 
     return { message: 'Job updated' };
   }
 
-  private async notifyAssignment(jobId: string, jobCode: string, techId: string): Promise<void> {
-    const job = await this.prisma.job.findUnique({
-      where: { id: jobId },
-      include: { vehicle: true },
-    });
-    if (!job) return;
+  private async notifyAssignment(job: ResolvedJob, techId: string): Promise<void> {
     await this.notifications.pushToUsers([techId], {
       title: 'New job assigned',
       body: `${job.vehicle.make} ${job.vehicle.model} · ${job.vehicle.plate}`,
-      data: { type: 'job_assigned', jobCode },
+      data: { type: 'job_assigned', jobCode: job.code },
     });
   }
 
-  private async notifyCompleted(jobId: string, jobCode: string, actorId: string): Promise<void> {
-    const job = await this.prisma.job.findUnique({
-      where: { id: jobId },
-      include: { vehicle: true },
-    });
-    if (!job) return;
+  private async notifyCompleted(job: ResolvedJob, actorId: string): Promise<void> {
     await this.notifications.pushToRoles(
       [UserRole.MANAGER, UserRole.ADMIN],
       job.workshopId,
       {
         title: 'Job completed',
         body: `${job.vehicle.plate} is ready for delivery`,
-        data: { type: 'job_completed', jobCode },
+        data: { type: 'job_completed', jobCode: job.code },
       },
       actorId,
     );
   }
 
-  private async notifyDelivered(jobId: string, jobCode: string, actorId: string): Promise<void> {
-    const job = await this.prisma.job.findUnique({
-      where: { id: jobId },
-      include: { vehicle: true },
-    });
-    if (!job) return;
+  private async notifyDelivered(job: ResolvedJob, actorId: string): Promise<void> {
     await this.notifications.pushToRoles(
       [UserRole.MANAGER, UserRole.ADMIN],
       job.workshopId,
       {
         title: 'Vehicle delivered',
         body: `${job.vehicle.plate} was delivered to the customer`,
-        data: { type: 'job_delivered', jobCode },
+        data: { type: 'job_delivered', jobCode: job.code },
       },
       actorId,
     );
@@ -441,7 +423,7 @@ export class JobsService {
         where: { id: user.id },
         select: { name: true },
       });
-      void this.notifyNewMessage(job.id, job.code, dto.type, user.id, author?.name ?? 'Someone');
+      void this.notifyNewMessage(job, dto.type, user.id, author?.name ?? 'Someone');
     }
 
     return event;
@@ -459,18 +441,11 @@ export class JobsService {
   // Notify a job's tech + all managers/admins (minus the author) of a new chat
   // message, deep-linking them to the job.
   private async notifyNewMessage(
-    jobId: string,
-    jobCode: string,
+    job: ResolvedJob,
     type: JobEventType,
     authorId: string,
     authorName: string,
   ): Promise<void> {
-    const job = await this.prisma.job.findUnique({
-      where: { id: jobId },
-      include: { vehicle: true },
-    });
-    if (!job) return;
-
     const preview =
       type === JobEventType.PHOTO
         ? '📷 Photo'
@@ -481,7 +456,7 @@ export class JobsService {
     const payload = {
       title: `${authorName} · ${job.vehicle.plate}`,
       body: preview,
-      data: { type: 'chat' as const, jobCode },
+      data: { type: 'chat' as const, jobCode: job.code },
     };
 
     // The assigned tech (if they aren't the author).
@@ -502,17 +477,30 @@ export class JobsService {
   async addParts(code: string, items: PartLineDto[], user: AuthUser) {
     const job = await this.resolveJob(code, user.workshopId);
     assertJobAccess(job, user);
-    const created: Awaited<ReturnType<JobEventsService['emit']>>[] = [];
-    for (const item of items) {
-      const cat = await this.prisma.catalogueItem.findUnique({
-        where: { id: item.catalogueItemId },
-      });
+    // The vehicle is with the customer — this job's costs are settled.
+    if (job.status === 'DELIVERED') {
+      throw new BadRequestException('This job is delivered; parts can no longer be added');
+    }
+    // Resolve the whole list in one lookup and validate it up front, so a
+    // missing item can't leave earlier lines half-applied.
+    const catalogue = await this.prisma.catalogueItem.findMany({
+      where: { id: { in: items.map((i) => i.catalogueItemId) } },
+    });
+    const byId = new Map(catalogue.map((c) => [c.id, c]));
+    const lines = items.map((item) => {
+      const cat = byId.get(item.catalogueItemId);
       if (!cat) throw new NotFoundException(`Catalogue item ${item.catalogueItemId} not found`);
+      return { item, cat };
+    });
+
+    const created: Awaited<ReturnType<JobEventsService['emit']>>[] = [];
+    for (const { item, cat } of lines) {
       if (cat.stock !== null) {
-        await this.prisma.catalogueItem.update({
-          where: { id: cat.id },
-          data: { stock: Math.max(0, cat.stock - item.qty) },
-        });
+        // Atomic floor-at-zero decrement — concurrent adds must not lose updates.
+        await this.prisma.$executeRaw`
+          UPDATE "CatalogueItem"
+          SET "stock" = GREATEST("stock" - ${item.qty}, 0), "updatedAt" = NOW()
+          WHERE "id" = ${cat.id}`;
       }
       const event = await this.events.emit(job.id, {
         type: JobEventType.PART_ADDED,
@@ -527,8 +515,13 @@ export class JobsService {
 
   // ── Internals ─────────────────────────────────────────────────────────────
 
+  // The vehicle rides along because every notification body is built from it —
+  // resolving once here saves each notify helper a refetch.
   private async resolveJob(code: string, workshopId: string) {
-    const job = await this.prisma.job.findFirst({ where: { code, workshopId } });
+    const job = await this.prisma.job.findFirst({
+      where: { code, workshopId },
+      include: { vehicle: true },
+    });
     if (!job) throw new NotFoundException('Job not found');
     return job;
   }
@@ -558,6 +551,23 @@ export class JobsService {
       message: 'Provide a customerId or customerName',
       errors: { customer: ['Customer required'] },
     });
+  }
+
+  // Allocate the next "jN" code and create the job. Two concurrent creates can
+  // race to the same code (count → probe → insert isn't atomic), so a
+  // duplicate-code insert re-allocates instead of surfacing a 500.
+  private async createWithUniqueCode(data: Omit<Prisma.JobUncheckedCreateInput, 'code'>) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.prisma.job.create({
+          data: { ...data, code: await this.nextJobCode() },
+        });
+      } catch (err) {
+        const duplicateCode =
+          err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+        if (!duplicateCode || attempt >= 2) throw err;
+      }
+    }
   }
 
   private async nextJobCode(): Promise<string> {

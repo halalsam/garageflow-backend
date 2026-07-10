@@ -194,6 +194,10 @@ model Job {
   // First moment a technician moved the job to IN_PROGRESS. Lets an estimate
   // decision restore the right status (started jobs resume, unstarted stay put).
   startedAt  DateTime?
+  // The status the job held when the estimate flow parked it in REVIEW; the
+  // decision restores it exactly (AWAITING_PART / COMPLETED included) and
+  // clears it. Null outside REVIEW (legacy REVIEW rows fall back to startedAt).
+  statusBeforeReview JobStatus?
 
   // Hand-off to the customer. Set when status moves to DELIVERED; the note is
   // text and/or a voice recording captured in the guided delivery flow.

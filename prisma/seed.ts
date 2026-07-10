@@ -76,10 +76,10 @@ async function main() {
   const j2 = await prisma.job.create({
     // Work started, then extra work surfaced → estimate resubmitted, so the job
     // is parked in REVIEW until the office decides (resumes IN_PROGRESS on approve).
-    data: { workshopId, code: 'j2', vehicleId: creta.id, customerId: sneha.id, techId: suresh.id, status: 'REVIEW', startedAt: minsAgo(120), bay: 'BAY 4', priority: 'NORMAL', complaint: 'Periodic service + AC gas top-up', progress: 40 },
+    data: { workshopId, code: 'j2', vehicleId: creta.id, customerId: sneha.id, techId: suresh.id, status: 'REVIEW', statusBeforeReview: 'IN_PROGRESS', startedAt: minsAgo(120), bay: 'BAY 4', priority: 'NORMAL', complaint: 'Periodic service + AC gas top-up', progress: 40 },
   });
   const j3 = await prisma.job.create({
-    data: { workshopId, code: 'j3', vehicleId: nexon.id, customerId: rakesh.id, status: 'REVIEW', priority: 'NORMAL', complaint: 'Brakes squealing, soft pedal', progress: 0 },
+    data: { workshopId, code: 'j3', vehicleId: nexon.id, customerId: rakesh.id, status: 'REVIEW', statusBeforeReview: 'NOT_STARTED', priority: 'NORMAL', complaint: 'Brakes squealing, soft pedal', progress: 0 },
   });
   const j4 = await prisma.job.create({
     data: { workshopId, code: 'j4', vehicleId: city.id, customerId: rakesh.id, techId: arjun.id, status: 'COMPLETED', startedAt: minsAgo(240), priority: 'NORMAL', progress: 100 },
