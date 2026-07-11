@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsOptional,
   IsString,
   Min,
   MinLength,
@@ -17,6 +18,14 @@ export class PartLineDto {
   @IsInt()
   @Min(1)
   qty: number;
+
+  // Optional unit-price override (in paise). Honoured only for managers/admins;
+  // techs always bill the catalogue price. Lets the office adjust the charge for
+  // a specific job without editing the catalogue master.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  pricePaise?: number;
 }
 
 export class AddPartsDto {

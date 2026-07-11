@@ -502,11 +502,15 @@ export class JobsService {
           SET "stock" = GREATEST("stock" - ${item.qty}, 0), "updatedAt" = NOW()
           WHERE "id" = ${cat.id}`;
       }
+      // Managers/admins may override the unit price for this job; techs always
+      // bill the catalogue price.
+      const unitPaise =
+        item.pricePaise != null && user.role !== UserRole.TECH ? item.pricePaise : cat.pricePaise;
       const event = await this.events.emit(job.id, {
         type: JobEventType.PART_ADDED,
         authorId: user.id,
         // unit price in paise; the serializer exposes qty × price in rupees.
-        payload: { partName: cat.name, qty: item.qty, pricePaise: cat.pricePaise },
+        payload: { partName: cat.name, qty: item.qty, pricePaise: unitPaise },
       });
       created.push(event);
     }

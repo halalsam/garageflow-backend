@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsIn,
   IsInt,
@@ -80,10 +81,11 @@ export class CreateJobDto {
   @IsIn(['HIGH', 'NORMAL'])
   priority?: string;
 
-  // Optional initial estimate (submitted for approval; sets the job to REVIEW).
-  @IsOptional()
+  // Initial estimate — required. Every job card is submitted for approval on
+  // creation (parks the job in REVIEW), so it must carry at least one line.
   @IsArray()
+  @ArrayMinSize(1, { message: 'Add at least one line item' })
   @ValidateNested({ each: true })
   @Type(() => JobLineDto)
-  lines?: JobLineDto[];
+  lines: JobLineDto[];
 }
