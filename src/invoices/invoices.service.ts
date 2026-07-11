@@ -13,6 +13,7 @@ import { toPaise } from '../common/format';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { JobEventsService } from '../jobs/job-events.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { UpdateInvoiceLinesDto } from './dto/update-invoice-lines.dto';
 
 @Injectable()
 export class InvoicesService {
@@ -44,6 +45,38 @@ export class InvoicesService {
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
     return serializeInvoice(invoice);
+  }
+
+  // Replace an invoice's line items (manager/admin) so the office can adjust
+  // prices before sharing it. Paid/balance/status are derived from payments, so
+  // they re-settle against the new total on the next read.
+  async updateLines(id: string, dto: UpdateInvoiceLinesDto, user: AuthUser) {
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id, workshopId: user.workshopId },
+      include: { job: true },
+    });
+    if (!invoice) throw new NotFoundException('Invoice not found');
+
+    const lines = dto.lines.map((l) => ({
+      label: l.label,
+      note: l.note,
+      amountPaise: toPaise(l.amount),
+    }));
+    await this.prisma.$transaction([
+      this.prisma.invoiceLine.deleteMany({ where: { invoiceId: id } }),
+      this.prisma.invoice.update({
+        where: { id },
+        data: { lines: { create: lines } },
+      }),
+    ]);
+
+    if (invoice.job) {
+      await this.events.emit(invoice.job.id, {
+        type: JobEventType.SYSTEM,
+        body: `Invoice ${invoice.number} updated`,
+      });
+    }
+    return this.findOne(id, user.workshopId);
   }
 
   async addPayment(invoiceId: string, dto: RecordPaymentDto, user: AuthUser) {
